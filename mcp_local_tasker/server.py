@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -271,26 +271,32 @@ def ticket_create(
 
 
 @mcp.tool()
-def ticket_get(id: str) -> dict:
+def ticket_get(id: str, output: Optional[dict] = None) -> dict:
     """
     Get single ticket by ID with dependency info.
     
     Args:
         id: Ticket ID (format: t-xxxxxxxxxx)
+        output: Optional output configuration:
+            - mode: "inline" (default) or "file"
+            - format: "json" or "md" (only for file mode)
+            - path: file path (required for file mode)
     
     Returns:
         Ticket dict including:
         - depends_on: list of ticket IDs this ticket depends on
         - blocked_by: list of ticket IDs that depend on this ticket
+        Or meta dict if output to file.
     
     Raises:
         KeyError: If ticket not found
     
     Example:
         ticket_get(id="t-a1b2c3d4e5")
+        ticket_get(id="t-a1b2c3d4e5", output={"mode": "file", "format": "md", "path": "./handoff/ticket.md"})
     """
     st = require_storage()
-    return st.ticket_get(id)
+    return st.ticket_get(id, output)
 
 
 @mcp.tool()
@@ -301,7 +307,8 @@ def ticket_list(
     category: Optional[str] = None,
     include_deleted: bool = False,
     sort: str = "priority",
-) -> list[dict]:
+    output: Optional[dict] = None,
+) -> Any:
     """
     List tickets with optional filters.
     
@@ -318,13 +325,18 @@ def ticket_list(
             Allowed: priority (priority DESC, updated_at DESC),
                     updated (updated_at DESC),
                     created (created_at DESC)
+        output: Optional output configuration:
+            - mode: "inline" (default) or "file"
+            - format: "json" or "md" (only for file mode)
+            - path: file path (required for file mode)
     
     Returns:
-        List of ticket dicts
+        List of ticket dicts, or meta dict if output to file.
     
     Example:
         ticket_list(milestone_id="ms-a1b2c3d4e5", status="todo", sort="priority")
         ticket_list(statuses=["todo", "in_progress", "blocked"])  # all open tickets
+        ticket_list(statuses=["todo", "in_progress"], output={"mode": "file", "format": "md", "path": "./open.md"})
     """
     st = require_storage()
     if status and status not in ALLOWED_TICKET_STATUS:
@@ -338,7 +350,7 @@ def ticket_list(
     if sort not in {"priority", "updated", "created"}:
         raise ValueError("sort must be one of: priority, updated, created")
     return st.ticket_list(
-        milestone_id, status, statuses, category, bool(include_deleted), sort
+        milestone_id, status, statuses, category, bool(include_deleted), sort, output
     )
 
 
@@ -428,7 +440,8 @@ def ticket_search(
     statuses: Optional[list[str]] = None,
     category: Optional[str] = None,
     limit: int = 20,
-) -> list[dict]:
+    output: Optional[dict] = None,
+) -> Any:
     """
     Full-text search tickets using SQLite FTS5.
     
@@ -444,14 +457,18 @@ def ticket_search(
             Example: ["todo", "in_progress", "blocked"] for open tickets
         category: Filter by category (optional)
         limit: Max results (default: 20, max: 100)
+        output: Optional output configuration:
+            - mode: "inline" (default) or "file"
+            - format: "json" or "md" (only for file mode)
+            - path: file path (required for file mode)
     
     Returns:
-        List of ticket dicts with id, title, status, priority, category, 
-        milestone_id, updated_at, and bm25 rank score
+        List of ticket dicts, or meta dict if output to file.
     
     Example:
         ticket_search(query="authentication", category="backend", limit=10)
         ticket_search(query="", statuses=["todo", "in_progress"])
+        ticket_search(query="backend", output={"mode": "file", "format": "md", "path": "./backend.md"})
     """
     st = require_storage()
     if status and status not in ALLOWED_TICKET_STATUS:
@@ -462,7 +479,7 @@ def ticket_search(
                 raise ValueError(f"Invalid ticket status: {s}")
     if category and category not in ALLOWED_CATEGORY:
         raise ValueError(f"Invalid category: {category}")
-    return st.ticket_search(query, milestone_id, status, statuses, category, int(limit))
+    return st.ticket_search(query, milestone_id, status, statuses, category, int(limit), output)
 
 
 # ---- Dependency tools ----

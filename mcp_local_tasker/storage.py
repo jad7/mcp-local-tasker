@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -12,7 +13,60 @@ from .constants import (
     json_dumps,
     now_ts,
     gen_id,
+    ensure_dir,
 )
+
+
+def format_output(data: Any, format: str) -> str:
+    if format == "json":
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif format == "md":
+        if isinstance(data, list):
+            lines = ["# Tickets\n"]
+            for item in data:
+                lines.append(f"- **{item.get('title', 'N/A')}** ({item.get('status', 'N/A')})")
+                lines.append(f"  - ID: {item.get('id', 'N/A')}")
+                lines.append(f"  - Category: {item.get('category', 'N/A')}")
+                if item.get('description'):
+                    lines.append(f"  - Description: {item.get('description', '')}")
+                lines.append("")
+            return "\n".join(lines)
+        elif isinstance(data, dict):
+            lines = ["# Ticket\n"]
+            for key, value in data.items():
+                lines.append(f"- **{key}**: {value}")
+            return "\n".join(lines)
+        else:
+            return str(data)
+    else:
+        raise ValueError(f"Unknown format: {format}")
+
+
+def write_output(data: Any, output: dict) -> dict:
+    mode = output.get("mode", "inline")
+    format = output.get("format", "json")
+    path = output.get("path")
+
+    if mode == "inline":
+        return data
+
+    if mode == "file":
+        if not path:
+            raise ValueError("path is required when mode is 'file'")
+
+        ensure_dir(os.path.dirname(path))
+        content = format_output(data, format)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        return {
+            "ok": True,
+            "written_to": path,
+            "format": format,
+            "count": len(data) if isinstance(data, list) else 1,
+        }
+
+    raise ValueError(f"Unknown mode: {mode}")
 
 
 @dataclass
@@ -315,7 +369,7 @@ class Storage:
             )
         return self.ticket_get(tid)
 
-    def ticket_get(self, ticket_id: str) -> dict:
+    def ticket_get(self, ticket_id: str, output: Optional[dict] = None) -> Any:
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT * FROM tickets WHERE id = ?", (ticket_id,)
@@ -335,6 +389,9 @@ class Storage:
 
             ticket["depends_on"] = [r["depends_on_ticket_id"] for r in deps]
             ticket["blocked_by"] = [r["ticket_id"] for r in blocked_by]
+
+            if output:
+                return write_output(ticket, output)
             return ticket
 
     def ticket_list(
@@ -345,7 +402,8 @@ class Storage:
         category: Optional[str],
         include_deleted: bool,
         sort: str,
-    ) -> list[dict]:
+        output: Optional[dict] = None,
+    ) -> Any:
         if status and statuses:
             raise ValueError("Cannot use both 'status' and 'statuses' at once")
 
@@ -389,6 +447,9 @@ class Storage:
                 q += " ORDER BY created_at DESC"
 
             rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+
+            if output:
+                return write_output(rows, output)
             return rows
 
     def ticket_update(
@@ -497,7 +558,8 @@ class Storage:
         statuses: Optional[list[str]],
         category: Optional[str],
         limit: int,
-    ) -> list[dict]:
+        output: Optional[dict] = None,
+    ) -> Any:
         if status and statuses:
             raise ValueError("Cannot use both 'status' and 'statuses' at once")
 
@@ -559,6 +621,9 @@ class Storage:
                     LIMIT {limit}
                 """
             rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+            if output:
+                return write_output(rows, output)
             return rows
 
     # ---- Dependencies ----
