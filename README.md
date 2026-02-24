@@ -30,12 +30,23 @@ pip install -e .
 ### Running
 
 ```bash
-# Run as MCP server (STDIO)
+# Run as MCP server (STDIO) - default, for Claude/Cursor
 python -m mcp_local_tasker
 
 # Or use the entry point (after package is installed)
 mcp-local-tasker
+
+# HTTP SSE transport
+python -m mcp_local_tasker --transport sse --mount-path /mcp
+
+# HTTP Streamable transport
+python -m mcp_local_tasker --transport streamable-http --mount-path /mcp
 ```
+
+Transport options:
+- `stdio` (default) - for Claude Desktop, Cursor, VS Code
+- `sse` - Server-Sent Events over HTTP
+- `streamable-http` - Streaming HTTP
 
 ### Configuration (Claude Desktop / Cursor)
 
