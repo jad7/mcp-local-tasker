@@ -25,6 +25,7 @@ from .server import (
     ticket_get,
     ticket_graph,
     ticket_list,
+    ticket_next,
     ticket_search,
     ticket_set_status,
     ticket_update,
@@ -34,7 +35,7 @@ from .storage import Storage
 __all__ = [
     # constants
     "ALLOWED_CATEGORY",
-    "ALLOWED_MILESTONE_STATUS", 
+    "ALLOWED_MILESTONE_STATUS",
     "ALLOWED_TICKET_STATUS",
     "ensure_dir",
     "gen_id",
@@ -56,6 +57,7 @@ __all__ = [
     "ticket_create",
     "ticket_get",
     "ticket_list",
+    "ticket_next",
     "ticket_update",
     "ticket_set_status",
     "ticket_delete",

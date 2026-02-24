@@ -24,10 +24,12 @@ def format_output(data: Any, format: str) -> str:
         if isinstance(data, list):
             lines = ["# Tickets\n"]
             for item in data:
-                lines.append(f"- **{item.get('title', 'N/A')}** ({item.get('status', 'N/A')})")
+                lines.append(
+                    f"- **{item.get('title', 'N/A')}** ({item.get('status', 'N/A')})"
+                )
                 lines.append(f"  - ID: {item.get('id', 'N/A')}")
                 lines.append(f"  - Category: {item.get('category', 'N/A')}")
-                if item.get('description'):
+                if item.get("description"):
                     lines.append(f"  - Description: {item.get('description', '')}")
                 lines.append("")
             return "\n".join(lines)
@@ -203,9 +205,7 @@ class Storage:
                 raise KeyError(f"Milestone not found: {milestone_id}")
             return dict(row)
 
-    def milestone_list(
-        self, status: Optional[str], include_counts: bool
-    ) -> list[dict]:
+    def milestone_list(self, status: Optional[str], include_counts: bool) -> list[dict]:
         with self.connect() as conn:
             params: list[Any] = []
             q = "SELECT * FROM milestones"
@@ -263,9 +263,7 @@ class Storage:
             )
             if cur.rowcount == 0:
                 raise KeyError(f"Milestone not found: {milestone_id}")
-            self.log_event(
-                conn, "milestone", milestone_id, "update", {"patch": patch}
-            )
+            self.log_event(conn, "milestone", milestone_id, "update", {"patch": patch})
         return self.milestone_get(milestone_id)
 
     def milestone_delete(self, milestone_id: str, force: bool) -> dict:
@@ -300,9 +298,7 @@ class Storage:
         if category not in ALLOWED_CATEGORY:
             raise ValueError(f"Invalid category: {category}")
 
-    def _fts_upsert(
-        self, conn: sqlite3.Connection, ticket_id: str
-    ) -> None:
+    def _fts_upsert(self, conn: sqlite3.Connection, ticket_id: str) -> None:
         conn.execute("DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,))
         conn.execute(
             """
@@ -510,9 +506,7 @@ class Storage:
                 raise KeyError(f"Ticket not found: {ticket_id}")
 
             self._fts_upsert(conn, ticket_id)
-            self.log_event(
-                conn, "ticket", ticket_id, "update", {"patch": patch}
-            )
+            self.log_event(conn, "ticket", ticket_id, "update", {"patch": patch})
         return self.ticket_get(ticket_id)
 
     def ticket_set_status(
@@ -523,17 +517,11 @@ class Storage:
     def ticket_delete(self, ticket_id: str, hard: bool) -> dict:
         with self.connect() as conn:
             if hard:
-                cur = conn.execute(
-                    "DELETE FROM tickets WHERE id = ?", (ticket_id,)
-                )
+                cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
                 if cur.rowcount == 0:
                     raise KeyError(f"Ticket not found: {ticket_id}")
-                conn.execute(
-                    "DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,)
-                )
-                self.log_event(
-                    conn, "ticket", ticket_id, "delete", {"hard": True}
-                )
+                conn.execute("DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,))
+                self.log_event(conn, "ticket", ticket_id, "delete", {"hard": True})
                 return {"ok": True, "hard": True}
             else:
                 cur = conn.execute(
@@ -542,12 +530,8 @@ class Storage:
                 )
                 if cur.rowcount == 0:
                     raise KeyError(f"Ticket not found: {ticket_id}")
-                conn.execute(
-                    "DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,)
-                )
-                self.log_event(
-                    conn, "ticket", ticket_id, "delete", {"hard": False}
-                )
+                conn.execute("DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,))
+                self.log_event(conn, "ticket", ticket_id, "delete", {"hard": False})
                 return {"ok": True, "hard": False}
 
     def ticket_search(
@@ -722,9 +706,7 @@ class Storage:
                     queue.append(nxt)
         return False
 
-    def ticket_graph(
-        self, milestone_id: Optional[str], depth: int
-    ) -> dict:
+    def ticket_graph(self, milestone_id: Optional[str], depth: int) -> dict:
         depth = int(depth or 5)
         if depth < 1:
             depth = 1
@@ -796,3 +778,46 @@ class Storage:
                 except Exception:
                     pass
             return rows
+
+    # ---- Next Task (Iterator) ----
+
+    def ticket_next(self) -> Optional[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id FROM milestones
+                WHERE status NOT IN ('done', 'archived')
+                ORDER BY priority DESC, updated_at DESC
+                LIMIT 1
+                """
+            ).fetchall()
+            if not rows:
+                return None
+            milestone_id = rows[0]["id"]
+
+            open_statuses = ("todo", "in_progress", "blocked")
+            candidate_rows = conn.execute(
+                """
+                SELECT id, title, status, priority, category, milestone_id
+                FROM tickets
+                WHERE milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?)
+                ORDER BY priority DESC, created_at ASC
+                """,
+                (milestone_id, *open_statuses),
+            ).fetchall()
+
+            for row in candidate_rows:
+                tid = row["id"]
+                deps = conn.execute(
+                    """
+                    SELECT t.status FROM tickets t
+                    JOIN ticket_deps d ON d.depends_on_ticket_id = t.id
+                    WHERE d.ticket_id = ?
+                    """,
+                    (tid,),
+                ).fetchall()
+                blocked = any(d["status"] not in ("done", "canceled") for d in deps)
+                if not blocked:
+                    return self.ticket_get(tid)
+
+            return None
