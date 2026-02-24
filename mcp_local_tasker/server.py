@@ -144,6 +144,7 @@ def milestone_create(
     priority: int = 0,
     status: str = "planned",
     rank: Optional[int] = None,
+    prefix: Optional[str] = None,
 ) -> dict:
     """
     Create a new milestone (milestone = sprint/release/goal container).
@@ -153,15 +154,16 @@ def milestone_create(
         description: Detailed description (optional, default: "")
         priority: Integer priority, higher = more important (default: 0)
         rank: Order rank for sorting (default: equals priority)
+        prefix: Custom prefix for ticket IDs (default: M{n}, e.g., M1, M2)
         status: Initial status (default: "planned")
             Allowed: planned, active, done, archived
 
     Returns:
-        Created milestone dict with id, title, description, status, priority, rank,
+        Created milestone dict with id, title, description, status, priority, rank, prefix,
         created_at, updated_at, version
 
     Example:
-        milestone_create(title="Q1 2025 Release", description="Ship new API", priority=10, rank=1, status="planned")
+        milestone_create(title="Q1 2025 Release", description="Ship new API", priority=10, rank=1, prefix="Q1", status="planned")
     """
     st = require_storage()
     return st.milestone_create(
@@ -170,6 +172,7 @@ def milestone_create(
         status=status,
         priority=int(priority),
         rank=int(rank) if rank is not None else None,
+        prefix=prefix,
     )
 
 
@@ -282,6 +285,7 @@ def ticket_create(
     acceptance_criteria: str = "",
     status: str = "todo",
     is_bug: bool = False,
+    id: Optional[str] = None,
 ) -> dict:
     """
     Create a new ticket (task/issue/work item).
@@ -298,6 +302,7 @@ def ticket_create(
         status: Initial status (default: "todo")
             Allowed: todo, in_progress, blocked, done, canceled
         is_bug: Whether this ticket is a bug (default: false). Bugs are prioritized in ticket_next().
+        id: Custom ticket ID (optional). Only use for migration from other systems.
 
     Returns:
         Created ticket dict with id, milestone_id, title, description, category,
@@ -332,6 +337,7 @@ def ticket_create(
         acceptance_criteria=acceptance_criteria,
         status=status,
         is_bug=is_bug,
+        id=id,
     )
 
 

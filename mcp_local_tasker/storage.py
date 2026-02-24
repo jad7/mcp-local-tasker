@@ -10,9 +10,11 @@ from .constants import (
     ALLOWED_CATEGORY,
     ALLOWED_MILESTONE_STATUS,
     ALLOWED_TICKET_STATUS,
+    CATEGORY_SHORT,
     json_dumps,
     now_ts,
     gen_id,
+    gen_ticket_id,
     ensure_dir,
 )
 
@@ -120,6 +122,8 @@ class Storage:
                     status TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0,
                     rank INTEGER NOT NULL DEFAULT 0,
+                    prefix TEXT NOT NULL DEFAULT '',
+                    ticket_counter INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -183,6 +187,17 @@ class Storage:
                     "ALTER TABLE milestones ADD COLUMN rank INTEGER NOT NULL DEFAULT 0"
                 )
 
+            # Migration: add prefix and ticket_counter to milestones
+            try:
+                conn.execute("SELECT prefix FROM milestones LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(
+                    "ALTER TABLE milestones ADD COLUMN prefix TEXT NOT NULL DEFAULT ''"
+                )
+                conn.execute(
+                    "ALTER TABLE milestones ADD COLUMN ticket_counter INTEGER NOT NULL DEFAULT 0"
+                )
+
             # Migration: add is_bug column if it doesn't exist
             try:
                 conn.execute("SELECT is_bug FROM tickets LIMIT 1")
@@ -223,17 +238,25 @@ class Storage:
         status: str,
         priority: int,
         rank: Optional[int] = None,
+        prefix: Optional[str] = None,
     ) -> dict:
         if status not in ALLOWED_MILESTONE_STATUS:
             raise ValueError(f"Invalid milestone status: {status}")
         mid = gen_id("ms")
         ts = now_ts()
         rank = rank if rank is not None else priority
+
         with self.connect() as conn:
+            if not prefix:
+                count = conn.execute("SELECT COUNT(*) as c FROM milestones").fetchone()[
+                    "c"
+                ]
+                prefix = f"M{count + 1}"
+
             conn.execute(
                 """
-                INSERT INTO milestones(id, title, description, status, priority, rank, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO milestones(id, title, description, status, priority, rank, prefix, ticket_counter, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     mid,
@@ -242,6 +265,8 @@ class Storage:
                     status,
                     int(priority or 0),
                     int(rank),
+                    prefix,
+                    0,
                     ts,
                     ts,
                 ),
@@ -251,7 +276,13 @@ class Storage:
                 "milestone",
                 mid,
                 "create",
-                {"title": title, "status": status, "priority": priority, "rank": rank},
+                {
+                    "title": title,
+                    "status": status,
+                    "priority": priority,
+                    "rank": rank,
+                    "prefix": prefix,
+                },
             )
         return self.milestone_get(mid)
 
@@ -380,17 +411,30 @@ class Storage:
         acceptance_criteria: str,
         status: str,
         is_bug: bool = False,
+        id: Optional[str] = None,
     ) -> dict:
         self._ticket_validate(status, category)
-        tid = gen_id("t")
         ts = now_ts()
         with self.connect() as conn:
             if milestone_id:
                 m = conn.execute(
-                    "SELECT 1 FROM milestones WHERE id = ?", (milestone_id,)
+                    "SELECT id, prefix, ticket_counter FROM milestones WHERE id = ?",
+                    (milestone_id,),
                 ).fetchone()
                 if not m:
                     raise KeyError(f"Milestone not found: {milestone_id}")
+
+                if id is None:
+                    new_counter = m["ticket_counter"] + 1
+                    conn.execute(
+                        "UPDATE milestones SET ticket_counter = ? WHERE id = ?",
+                        (new_counter, milestone_id),
+                    )
+                    tid = gen_ticket_id(m["prefix"], category, is_bug, new_counter)
+                else:
+                    tid = id
+            else:
+                tid = id if id else gen_id("t")
 
             conn.execute(
                 """
