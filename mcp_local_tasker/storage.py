@@ -415,51 +415,62 @@ class Storage:
     ) -> dict:
         self._ticket_validate(status, category)
         ts = now_ts()
+        tid = None
+        new_counter = 0
         with self.connect() as conn:
-            if milestone_id:
-                m = conn.execute(
-                    "SELECT id, prefix, ticket_counter FROM milestones WHERE id = ?",
-                    (milestone_id,),
-                ).fetchone()
-                if not m:
-                    raise KeyError(f"Milestone not found: {milestone_id}")
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if milestone_id:
+                    m = conn.execute(
+                        "SELECT id, prefix, ticket_counter FROM milestones WHERE id = ?",
+                        (milestone_id,),
+                    ).fetchone()
+                    if not m:
+                        raise KeyError(f"Milestone not found: {milestone_id}")
 
-                if id is None:
-                    new_counter = m["ticket_counter"] + 1
+                    if id is None:
+                        new_counter = m["ticket_counter"] + 1
+                        tid = gen_ticket_id(m["prefix"], category, is_bug, new_counter)
+                    else:
+                        tid = id
+                else:
+                    tid = id if id else gen_id("t")
+
+                conn.execute(
+                    """
+                    INSERT INTO tickets(
+                        id, milestone_id, status, priority, category, is_bug, title,
+                        description, recommendations, acceptance_criteria,
+                        is_deleted, version, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                    """,
+                    (
+                        tid,
+                        milestone_id,
+                        status,
+                        int(priority or 0),
+                        category,
+                        1 if is_bug else 0,
+                        title,
+                        description or "",
+                        recommendations or "",
+                        acceptance_criteria or "",
+                        ts,
+                        ts,
+                    ),
+                )
+
+                if milestone_id and id is None:
                     conn.execute(
                         "UPDATE milestones SET ticket_counter = ? WHERE id = ?",
                         (new_counter, milestone_id),
                     )
-                    tid = gen_ticket_id(m["prefix"], category, is_bug, new_counter)
-                else:
-                    tid = id
-            else:
-                tid = id if id else gen_id("t")
 
-            conn.execute(
-                """
-                INSERT INTO tickets(
-                    id, milestone_id, status, priority, category, is_bug, title,
-                    description, recommendations, acceptance_criteria,
-                    is_deleted, version, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
-                """,
-                (
-                    tid,
-                    milestone_id,
-                    status,
-                    int(priority or 0),
-                    category,
-                    1 if is_bug else 0,
-                    title,
-                    description or "",
-                    recommendations or "",
-                    acceptance_criteria or "",
-                    ts,
-                    ts,
-                ),
-            )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
             self._fts_upsert(conn, tid)
             self.log_event(
                 conn,

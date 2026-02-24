@@ -773,3 +773,57 @@ def test_milestone_update_rank(storage):
 
     m2 = storage.milestone_update(m["id"], {"rank": 100})
     assert m2["rank"] == 100
+
+
+def test_milestone_prefix(storage):
+    m = storage.milestone_create("Test", "", "planned", 1, prefix="MYPROJ")
+    assert m["prefix"] == "MYPROJ"
+
+
+def test_milestone_default_prefix(storage):
+    m1 = storage.milestone_create("First", "", "planned", 1)
+    assert m1["prefix"] == "M1"
+
+    m2 = storage.milestone_create("Second", "", "planned", 1)
+    assert m2["prefix"] == "M2"
+
+
+def test_ticket_id_format_with_prefix(storage):
+    m = storage.milestone_create("Test", "", "planned", 1, prefix="G3")
+
+    t1 = storage.ticket_create(m["id"], "Task", "", "backend", 1, "", "", "todo")
+    assert t1["id"] == "G3-BE-T-1"
+
+    t2 = storage.ticket_create(m["id"], "Task", "", "frontend", 1, "", "", "todo")
+    assert t2["id"] == "G3-FE-T-2"
+
+    b = storage.ticket_create(
+        m["id"], "Bug", "", "backend", 1, "", "", "todo", is_bug=True
+    )
+    assert b["id"] == "G3-BE-BUG-3"
+
+
+def test_ticket_id_prefix_ending_with_dash(storage):
+    m = storage.milestone_create("Test", "", "planned", 1, prefix="P3-")
+
+    t = storage.ticket_create(m["id"], "Task", "", "backend", 1, "", "", "todo")
+    assert t["id"] == "P3-T-1"
+
+
+def test_ticket_custom_id_for_migration(storage):
+    t = storage.ticket_create(
+        None, "Old task", "", "backend", 1, "", "", "todo", id="LEGACY-123"
+    )
+    assert t["id"] == "LEGACY-123"
+
+
+def test_ticket_id_counter_increments(storage):
+    m = storage.milestone_create("Test", "", "planned", 1, prefix="TST")
+
+    t1 = storage.ticket_create(m["id"], "Task1", "", "backend", 1, "", "", "todo")
+    t2 = storage.ticket_create(m["id"], "Task2", "", "frontend", 1, "", "", "todo")
+    t3 = storage.ticket_create(m["id"], "Task3", "", "backend", 1, "", "", "todo")
+
+    assert "-1" in t1["id"]
+    assert "-2" in t2["id"]
+    assert "-3" in t3["id"]
