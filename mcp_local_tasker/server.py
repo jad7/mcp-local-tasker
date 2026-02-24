@@ -425,6 +425,7 @@ def ticket_search(
     query: str,
     milestone_id: Optional[str] = None,
     status: Optional[str] = None,
+    statuses: Optional[list[str]] = None,
     category: Optional[str] = None,
     limit: int = 20,
 ) -> list[dict]:
@@ -438,7 +439,9 @@ def ticket_search(
                Use empty string "" to get all tickets matching filters.
                Examples: "API", "authentication", 'word1 OR word2', "auth*"
         milestone_id: Filter by milestone (optional)
-        status: Filter by status (optional)
+        status: Filter by single status (optional). Cannot be used with statuses.
+        statuses: Filter by multiple statuses (optional). Cannot be used with status.
+            Example: ["todo", "in_progress", "blocked"] for open tickets
         category: Filter by category (optional)
         limit: Max results (default: 20, max: 100)
     
@@ -448,14 +451,18 @@ def ticket_search(
     
     Example:
         ticket_search(query="authentication", category="backend", limit=10)
-        ticket_search(query="", status="todo", milestone_id="ms-a1b2c3d4e5")
+        ticket_search(query="", statuses=["todo", "in_progress"])
     """
     st = require_storage()
     if status and status not in ALLOWED_TICKET_STATUS:
         raise ValueError(f"Invalid ticket status: {status}")
+    if statuses:
+        for s in statuses:
+            if s not in ALLOWED_TICKET_STATUS:
+                raise ValueError(f"Invalid ticket status: {s}")
     if category and category not in ALLOWED_CATEGORY:
         raise ValueError(f"Invalid category: {category}")
-    return st.ticket_search(query, milestone_id, status, category, int(limit))
+    return st.ticket_search(query, milestone_id, status, statuses, category, int(limit))
 
 
 # ---- Dependency tools ----

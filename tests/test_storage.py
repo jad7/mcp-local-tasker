@@ -211,7 +211,7 @@ def test_ticket_search_fts(storage):
     t1 = storage.ticket_create(None, "Python API endpoint", "Create REST API", "backend", 0, "", "", "todo")
     t2 = storage.ticket_create(None, "Vue Component", "UI Component", "frontend", 0, "", "", "todo")
 
-    results = storage.ticket_search("API", None, None, None, 10)
+    results = storage.ticket_search("API", None, None, None, None, 10)
     assert len(results) == 1
     assert results[0]["id"] == t1["id"]
 
@@ -220,7 +220,7 @@ def test_ticket_search_no_query(storage):
     t1 = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     t2 = storage.ticket_create(None, "T2", "", "frontend", 0, "", "", "todo")
 
-    results = storage.ticket_search("", None, None, "frontend", 10)
+    results = storage.ticket_search("", None, None, None, "frontend", 10)
     assert len(results) == 1
     assert results[0]["id"] == t2["id"]
 
@@ -229,7 +229,7 @@ def test_ticket_search_limit(storage):
     for i in range(25):
         storage.ticket_create(None, f"T{i}", "", "backend", i, "", "", "todo")
 
-    results = storage.ticket_search("", None, None, None, 5)
+    results = storage.ticket_search("", None, None, None, None, 5)
     assert len(results) == 5
 
 
@@ -397,10 +397,10 @@ def test_fts_upsert_on_update(storage):
 
     storage.ticket_update(t["id"], {"title": "Different456 Title"}, None)
 
-    results = storage.ticket_search("Different456", None, None, None, 10)
+    results = storage.ticket_search("Different456", None, None, None, None, 10)
     assert len(results) == 1
 
-    results = storage.ticket_search("UniqueWord123", None, None, None, 10)
+    results = storage.ticket_search("UniqueWord123", None, None, None, None, 10)
     assert len(results) == 0
 
 
@@ -409,7 +409,7 @@ def test_soft_delete_removes_from_fts(storage):
 
     storage.ticket_delete(t["id"], False)
 
-    results = storage.ticket_search("Delete", None, None, None, 10)
+    results = storage.ticket_search("Delete", None, None, None, None, 10)
     assert len(results) == 0
 
 
@@ -464,7 +464,7 @@ def test_ticket_search_by_status_and_category(storage):
     t2 = storage.ticket_create(None, "Backend task two", "", "backend", 0, "", "", "done")
     t3 = storage.ticket_create(None, "Frontend task", "", "frontend", 0, "", "", "todo")
 
-    results = storage.ticket_search("task one", None, None, None, 10)
+    results = storage.ticket_search("task one", None, None, None, None, 10)
     assert len(results) == 1
     assert results[0]["id"] == t1["id"]
 

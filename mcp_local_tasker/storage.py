@@ -494,9 +494,18 @@ class Storage:
         query: str,
         milestone_id: Optional[str],
         status: Optional[str],
+        statuses: Optional[list[str]],
         category: Optional[str],
         limit: int,
     ) -> list[dict]:
+        if status and statuses:
+            raise ValueError("Cannot use both 'status' and 'statuses' at once")
+
+        if statuses:
+            for s in statuses:
+                if s not in ALLOWED_TICKET_STATUS:
+                    raise ValueError(f"Invalid ticket status: {s}")
+
         limit = int(limit or 20)
         if limit < 1:
             limit = 1
@@ -515,9 +524,15 @@ class Storage:
             if milestone_id is not None:
                 where.append("t.milestone_id = ?")
                 params.append(milestone_id)
-            if status:
+
+            if statuses:
+                placeholders = ",".join("?" * len(statuses))
+                where.append(f"t.status IN ({placeholders})")
+                params.extend(statuses)
+            elif status:
                 where.append("t.status = ?")
                 params.append(status)
+
             if category:
                 where.append("t.category = ?")
                 params.append(category)
