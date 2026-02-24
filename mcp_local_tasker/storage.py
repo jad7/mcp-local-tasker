@@ -1,0 +1,705 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from .constants import (
+    ALLOWED_CATEGORY,
+    ALLOWED_MILESTONE_STATUS,
+    ALLOWED_TICKET_STATUS,
+    json_dumps,
+    now_ts,
+    gen_id,
+)
+
+
+@dataclass
+class Storage:
+    db_path: str
+
+    def connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        return conn
+
+    def init_schema(self) -> None:
+        with self.connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS milestones (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS tickets (
+                    id TEXT PRIMARY KEY,
+                    milestone_id TEXT NULL,
+                    status TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    category TEXT NOT NULL DEFAULT 'other',
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    recommendations TEXT NOT NULL DEFAULT '',
+                    acceptance_criteria TEXT NOT NULL DEFAULT '',
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY (milestone_id) REFERENCES milestones(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ticket_deps (
+                    ticket_id TEXT NOT NULL,
+                    depends_on_ticket_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (ticket_id, depends_on_ticket_id),
+                    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+                    FOREIGN KEY (depends_on_ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS ticket_fts
+                USING fts5(
+                    ticket_id,
+                    title,
+                    description,
+                    recommendations,
+                    acceptance_criteria
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tickets_milestone ON tickets(milestone_id);
+                CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
+                CREATE INDEX IF NOT EXISTS idx_tickets_category ON tickets(category);
+                """
+            )
+
+            conn.execute("DELETE FROM ticket_fts;")
+            conn.execute(
+                """
+                INSERT INTO ticket_fts(ticket_id, title, description, recommendations, acceptance_criteria)
+                SELECT id, title, description, recommendations, acceptance_criteria
+                FROM tickets
+                WHERE is_deleted = 0;
+                """
+            )
+
+    def log_event(
+        self,
+        conn: sqlite3.Connection,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+        payload: dict,
+    ) -> None:
+        conn.execute(
+            "INSERT INTO events(entity_type, entity_id, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+            (entity_type, entity_id, event_type, json_dumps(payload), now_ts()),
+        )
+
+    # ---- Milestones ----
+
+    def milestone_create(
+        self, title: str, description: str, status: str, priority: int
+    ) -> dict:
+        if status not in ALLOWED_MILESTONE_STATUS:
+            raise ValueError(f"Invalid milestone status: {status}")
+        mid = gen_id("ms")
+        ts = now_ts()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO milestones(id, title, description, status, priority, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (mid, title, description or "", status, int(priority or 0), ts, ts),
+            )
+            self.log_event(
+                conn,
+                "milestone",
+                mid,
+                "create",
+                {"title": title, "status": status, "priority": priority},
+            )
+        return self.milestone_get(mid)
+
+    def milestone_get(self, milestone_id: str) -> dict:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM milestones WHERE id = ?", (milestone_id,)
+            ).fetchone()
+            if not row:
+                raise KeyError(f"Milestone not found: {milestone_id}")
+            return dict(row)
+
+    def milestone_list(
+        self, status: Optional[str], include_counts: bool
+    ) -> list[dict]:
+        with self.connect() as conn:
+            params: list[Any] = []
+            q = "SELECT * FROM milestones"
+            if status:
+                q += " WHERE status = ?"
+                params.append(status)
+            q += " ORDER BY priority DESC, updated_at DESC"
+
+            rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+            if not include_counts:
+                return rows
+
+            for m in rows:
+                cnt = conn.execute(
+                    "SELECT COUNT(*) AS c FROM tickets WHERE milestone_id = ? AND is_deleted = 0",
+                    (m["id"],),
+                ).fetchone()["c"]
+                open_cnt = conn.execute(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM tickets
+                    WHERE milestone_id = ? AND is_deleted = 0 AND status NOT IN ('done','canceled')
+                    """,
+                    (m["id"],),
+                ).fetchone()["c"]
+                m["ticket_count"] = int(cnt)
+                m["open_ticket_count"] = int(open_cnt)
+            return rows
+
+    def milestone_update(self, milestone_id: str, patch: dict) -> dict:
+        allowed = {"title", "description", "status", "priority"}
+        unknown = set(patch.keys()) - allowed
+        if unknown:
+            raise ValueError(f"Unknown fields in patch: {sorted(unknown)}")
+        if "status" in patch and patch["status"] not in ALLOWED_MILESTONE_STATUS:
+            raise ValueError(f"Invalid milestone status: {patch['status']}")
+
+        fields = []
+        params = []
+        for k in allowed:
+            if k in patch:
+                fields.append(f"{k} = ?")
+                params.append(patch[k])
+
+        if not fields:
+            return self.milestone_get(milestone_id)
+
+        params.append(now_ts())
+        params.append(milestone_id)
+
+        with self.connect() as conn:
+            cur = conn.execute(
+                f"UPDATE milestones SET {', '.join(fields)}, updated_at = ? WHERE id = ?",
+                params,
+            )
+            if cur.rowcount == 0:
+                raise KeyError(f"Milestone not found: {milestone_id}")
+            self.log_event(
+                conn, "milestone", milestone_id, "update", {"patch": patch}
+            )
+        return self.milestone_get(milestone_id)
+
+    def milestone_delete(self, milestone_id: str, force: bool) -> dict:
+        with self.connect() as conn:
+            if force:
+                cur = conn.execute(
+                    "DELETE FROM milestones WHERE id = ?", (milestone_id,)
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(f"Milestone not found: {milestone_id}")
+                self.log_event(
+                    conn, "milestone", milestone_id, "delete", {"force": True}
+                )
+                return {"ok": True}
+            else:
+                cur = conn.execute(
+                    "UPDATE milestones SET status = 'archived', updated_at = ? WHERE id = ?",
+                    (now_ts(), milestone_id),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(f"Milestone not found: {milestone_id}")
+                self.log_event(
+                    conn, "milestone", milestone_id, "archive", {"force": False}
+                )
+                return {"ok": True, "status": "archived"}
+
+    # ---- Tickets ----
+
+    def _ticket_validate(self, status: str, category: str) -> None:
+        if status not in ALLOWED_TICKET_STATUS:
+            raise ValueError(f"Invalid ticket status: {status}")
+        if category not in ALLOWED_CATEGORY:
+            raise ValueError(f"Invalid category: {category}")
+
+    def _fts_upsert(
+        self, conn: sqlite3.Connection, ticket_id: str
+    ) -> None:
+        conn.execute("DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,))
+        conn.execute(
+            """
+            INSERT INTO ticket_fts(ticket_id, title, description, recommendations, acceptance_criteria)
+            SELECT id, title, description, recommendations, acceptance_criteria
+            FROM tickets
+            WHERE id = ? AND is_deleted = 0
+            """,
+            (ticket_id,),
+        )
+
+    def ticket_create(
+        self,
+        milestone_id: Optional[str],
+        title: str,
+        description: str,
+        category: str,
+        priority: int,
+        recommendations: str,
+        acceptance_criteria: str,
+        status: str,
+    ) -> dict:
+        self._ticket_validate(status, category)
+        tid = gen_id("t")
+        ts = now_ts()
+        with self.connect() as conn:
+            if milestone_id:
+                m = conn.execute(
+                    "SELECT 1 FROM milestones WHERE id = ?", (milestone_id,)
+                ).fetchone()
+                if not m:
+                    raise KeyError(f"Milestone not found: {milestone_id}")
+
+            conn.execute(
+                """
+                INSERT INTO tickets(
+                    id, milestone_id, status, priority, category, title,
+                    description, recommendations, acceptance_criteria,
+                    is_deleted, version, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                """,
+                (
+                    tid,
+                    milestone_id,
+                    status,
+                    int(priority or 0),
+                    category,
+                    title,
+                    description or "",
+                    recommendations or "",
+                    acceptance_criteria or "",
+                    ts,
+                    ts,
+                ),
+            )
+            self._fts_upsert(conn, tid)
+            self.log_event(
+                conn,
+                "ticket",
+                tid,
+                "create",
+                {"title": title, "status": status, "milestone_id": milestone_id},
+            )
+        return self.ticket_get(tid)
+
+    def ticket_get(self, ticket_id: str) -> dict:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tickets WHERE id = ?", (ticket_id,)
+            ).fetchone()
+            if not row:
+                raise KeyError(f"Ticket not found: {ticket_id}")
+            ticket = dict(row)
+
+            deps = conn.execute(
+                "SELECT depends_on_ticket_id FROM ticket_deps WHERE ticket_id = ? ORDER BY depends_on_ticket_id",
+                (ticket_id,),
+            ).fetchall()
+            blocked_by = conn.execute(
+                "SELECT ticket_id FROM ticket_deps WHERE depends_on_ticket_id = ? ORDER BY ticket_id",
+                (ticket_id,),
+            ).fetchall()
+
+            ticket["depends_on"] = [r["depends_on_ticket_id"] for r in deps]
+            ticket["blocked_by"] = [r["ticket_id"] for r in blocked_by]
+            return ticket
+
+    def ticket_list(
+        self,
+        milestone_id: Optional[str],
+        status: Optional[str],
+        category: Optional[str],
+        include_deleted: bool,
+        sort: str,
+    ) -> list[dict]:
+        with self.connect() as conn:
+            where = []
+            params: list[Any] = []
+
+            if milestone_id is not None:
+                where.append("milestone_id = ?")
+                params.append(milestone_id)
+
+            if status:
+                where.append("status = ?")
+                params.append(status)
+
+            if category:
+                where.append("category = ?")
+                params.append(category)
+
+            if not include_deleted:
+                where.append("is_deleted = 0")
+
+            q = "SELECT * FROM tickets"
+            if where:
+                q += " WHERE " + " AND ".join(where)
+
+            if sort == "priority":
+                q += " ORDER BY priority DESC, updated_at DESC"
+            elif sort == "updated":
+                q += " ORDER BY updated_at DESC"
+            else:
+                q += " ORDER BY created_at DESC"
+
+            rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+            return rows
+
+    def ticket_update(
+        self,
+        ticket_id: str,
+        patch: dict,
+        expected_version: Optional[int],
+    ) -> dict:
+        allowed = {
+            "milestone_id",
+            "status",
+            "priority",
+            "category",
+            "title",
+            "description",
+            "recommendations",
+            "acceptance_criteria",
+        }
+        unknown = set(patch.keys()) - allowed
+        if unknown:
+            raise ValueError(f"Unknown fields in patch: {sorted(unknown)}")
+
+        if "status" in patch:
+            if patch["status"] not in ALLOWED_TICKET_STATUS:
+                raise ValueError(f"Invalid ticket status: {patch['status']}")
+        if "category" in patch:
+            if patch["category"] not in ALLOWED_CATEGORY:
+                raise ValueError(f"Invalid category: {patch['category']}")
+
+        fields = []
+        params = []
+        for k in allowed:
+            if k in patch:
+                fields.append(f"{k} = ?")
+                params.append(patch[k])
+
+        if not fields:
+            return self.ticket_get(ticket_id)
+
+        with self.connect() as conn:
+            if expected_version is not None:
+                row = conn.execute(
+                    "SELECT version FROM tickets WHERE id = ?", (ticket_id,)
+                ).fetchone()
+                if not row:
+                    raise KeyError(f"Ticket not found: {ticket_id}")
+                if int(row["version"]) != int(expected_version):
+                    raise ValueError(
+                        f"Version mismatch for {ticket_id}: expected {expected_version}, actual {row['version']}"
+                    )
+
+            params.append(now_ts())
+            q = f"UPDATE tickets SET {', '.join(fields)}, updated_at = ?, version = version + 1 WHERE id = ?"
+            params.append(ticket_id)
+
+            cur = conn.execute(q, params)
+            if cur.rowcount == 0:
+                raise KeyError(f"Ticket not found: {ticket_id}")
+
+            self._fts_upsert(conn, ticket_id)
+            self.log_event(
+                conn, "ticket", ticket_id, "update", {"patch": patch}
+            )
+        return self.ticket_get(ticket_id)
+
+    def ticket_set_status(
+        self, ticket_id: str, status: str, expected_version: Optional[int]
+    ) -> dict:
+        return self.ticket_update(ticket_id, {"status": status}, expected_version)
+
+    def ticket_delete(self, ticket_id: str, hard: bool) -> dict:
+        with self.connect() as conn:
+            if hard:
+                cur = conn.execute(
+                    "DELETE FROM tickets WHERE id = ?", (ticket_id,)
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(f"Ticket not found: {ticket_id}")
+                conn.execute(
+                    "DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,)
+                )
+                self.log_event(
+                    conn, "ticket", ticket_id, "delete", {"hard": True}
+                )
+                return {"ok": True, "hard": True}
+            else:
+                cur = conn.execute(
+                    "UPDATE tickets SET is_deleted = 1, updated_at = ?, version = version + 1 WHERE id = ?",
+                    (now_ts(), ticket_id),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(f"Ticket not found: {ticket_id}")
+                conn.execute(
+                    "DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,)
+                )
+                self.log_event(
+                    conn, "ticket", ticket_id, "delete", {"hard": False}
+                )
+                return {"ok": True, "hard": False}
+
+    def ticket_search(
+        self,
+        query: str,
+        milestone_id: Optional[str],
+        status: Optional[str],
+        category: Optional[str],
+        limit: int,
+    ) -> list[dict]:
+        limit = int(limit or 20)
+        if limit < 1:
+            limit = 1
+        if limit > 100:
+            limit = 100
+
+        with self.connect() as conn:
+            use_fts = query and query.strip()
+            if use_fts:
+                where = ["t.is_deleted = 0", "f.ticket_id = t.id", "ticket_fts MATCH ?"]
+                params: list[Any] = [query]
+            else:
+                where = ["t.is_deleted = 0"]
+                params = []
+
+            if milestone_id is not None:
+                where.append("t.milestone_id = ?")
+                params.append(milestone_id)
+            if status:
+                where.append("t.status = ?")
+                params.append(status)
+            if category:
+                where.append("t.category = ?")
+                params.append(category)
+
+            if use_fts:
+                sql = f"""
+                    SELECT
+                        t.id, t.title, t.status, t.priority, t.category, t.milestone_id, t.updated_at,
+                        bm25(ticket_fts) AS rank
+                    FROM ticket_fts f
+                    JOIN tickets t
+                    WHERE {" AND ".join(where)}
+                    ORDER BY rank
+                    LIMIT {limit}
+                """
+            else:
+                sql = f"""
+                    SELECT
+                        t.id, t.title, t.status, t.priority, t.category, t.milestone_id, t.updated_at,
+                        0 AS rank
+                    FROM tickets t
+                    WHERE {" AND ".join(where)}
+                    ORDER BY t.priority DESC, t.updated_at DESC
+                    LIMIT {limit}
+                """
+            rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+            return rows
+
+    # ---- Dependencies ----
+
+    def dep_add(
+        self, ticket_id: str, depends_on_ticket_id: str, check_cycles: bool
+    ) -> dict:
+        if ticket_id == depends_on_ticket_id:
+            raise ValueError("A ticket cannot depend on itself")
+
+        with self.connect() as conn:
+            a = conn.execute(
+                "SELECT 1 FROM tickets WHERE id = ? AND is_deleted = 0", (ticket_id,)
+            ).fetchone()
+            b = conn.execute(
+                "SELECT 1 FROM tickets WHERE id = ? AND is_deleted = 0",
+                (depends_on_ticket_id,),
+            ).fetchone()
+            if not a:
+                raise KeyError(f"Ticket not found: {ticket_id}")
+            if not b:
+                raise KeyError(f"Ticket not found: {depends_on_ticket_id}")
+
+            if check_cycles:
+                if self._reachable(
+                    conn, start=depends_on_ticket_id, target=ticket_id, max_nodes=5000
+                ):
+                    raise ValueError("Dependency would create a cycle")
+
+            conn.execute(
+                "INSERT OR IGNORE INTO ticket_deps(ticket_id, depends_on_ticket_id, created_at) VALUES (?, ?, ?)",
+                (ticket_id, depends_on_ticket_id, now_ts()),
+            )
+            self.log_event(
+                conn,
+                "ticket",
+                ticket_id,
+                "dependency_add",
+                {"depends_on": depends_on_ticket_id},
+            )
+        return {"ok": True}
+
+    def dep_remove(self, ticket_id: str, depends_on_ticket_id: str) -> dict:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM ticket_deps WHERE ticket_id = ? AND depends_on_ticket_id = ?",
+                (ticket_id, depends_on_ticket_id),
+            )
+            self.log_event(
+                conn,
+                "ticket",
+                ticket_id,
+                "dependency_remove",
+                {"depends_on": depends_on_ticket_id},
+            )
+        return {"ok": True}
+
+    def dep_list(self, ticket_id: str) -> dict:
+        with self.connect() as conn:
+            deps = conn.execute(
+                "SELECT depends_on_ticket_id FROM ticket_deps WHERE ticket_id = ? ORDER BY depends_on_ticket_id",
+                (ticket_id,),
+            ).fetchall()
+            blocked_by = conn.execute(
+                "SELECT ticket_id FROM ticket_deps WHERE depends_on_ticket_id = ? ORDER BY ticket_id",
+                (ticket_id,),
+            ).fetchall()
+            return {
+                "depends_on": [r["depends_on_ticket_id"] for r in deps],
+                "blocked_by": [r["ticket_id"] for r in blocked_by],
+            }
+
+    def _reachable(
+        self, conn: sqlite3.Connection, start: str, target: str, max_nodes: int
+    ) -> bool:
+        visited = set()
+        queue = [start]
+        steps = 0
+        while queue:
+            cur = queue.pop(0)
+            if cur == target:
+                return True
+            if cur in visited:
+                continue
+            visited.add(cur)
+            steps += 1
+            if steps > max_nodes:
+                return True
+            rows = conn.execute(
+                "SELECT depends_on_ticket_id FROM ticket_deps WHERE ticket_id = ?",
+                (cur,),
+            ).fetchall()
+            for r in rows:
+                nxt = r["depends_on_ticket_id"]
+                if nxt not in visited:
+                    queue.append(nxt)
+        return False
+
+    def ticket_graph(
+        self, milestone_id: Optional[str], depth: int
+    ) -> dict:
+        depth = int(depth or 5)
+        if depth < 1:
+            depth = 1
+        if depth > 50:
+            depth = 50
+
+        with self.connect() as conn:
+            params: list[Any] = []
+            where = ["t.is_deleted = 0"]
+            if milestone_id is not None:
+                where.append("t.milestone_id = ?")
+                params.append(milestone_id)
+
+            nodes = [
+                dict(r)
+                for r in conn.execute(
+                    f"SELECT id, title, status, priority, category, milestone_id FROM tickets t WHERE {' AND '.join(where)}",
+                    params,
+                ).fetchall()
+            ]
+
+            node_ids = {n["id"] for n in nodes}
+            edges = []
+            for r in conn.execute(
+                "SELECT ticket_id, depends_on_ticket_id FROM ticket_deps"
+            ).fetchall():
+                a = r["ticket_id"]
+                b = r["depends_on_ticket_id"]
+                if a in node_ids and b in node_ids:
+                    edges.append({"from": a, "to": b})
+
+            return {"nodes": nodes, "edges": edges, "depth": depth}
+
+    # ---- Events ----
+
+    def events_list(
+        self,
+        entity_type: Optional[str],
+        entity_id: Optional[str],
+        limit: int,
+    ) -> list[dict]:
+        limit = int(limit or 50)
+        if limit < 1:
+            limit = 1
+        if limit > 200:
+            limit = 200
+
+        with self.connect() as conn:
+            where = []
+            params: list[Any] = []
+
+            if entity_type:
+                where.append("entity_type = ?")
+                params.append(entity_type)
+            if entity_id:
+                where.append("entity_id = ?")
+                params.append(entity_id)
+
+            q = "SELECT * FROM events"
+            if where:
+                q += " WHERE " + " AND ".join(where)
+            q += " ORDER BY id DESC LIMIT ?"
+            params.append(limit)
+
+            rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+            for e in rows:
+                try:
+                    e["payload"] = json.loads(e["payload"])
+                except Exception:
+                    pass
+            return rows
