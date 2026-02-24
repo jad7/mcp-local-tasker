@@ -69,6 +69,32 @@ def get_project_root() -> Optional[str]:
 
 
 @mcp.tool()
+def get_stats() -> dict:
+    """
+    Get comprehensive statistics about the task tracker.
+
+    Returns:
+        Dict with:
+        - project_root: Current project directory
+        - total_tickets: Total number of tickets
+        - by_status: Tickets grouped by status
+        - by_category: Tickets grouped by category
+        - bugs: Bug statistics (total and by status)
+        - by_priority: Tickets grouped by priority
+        - milestones: List of milestones with progress
+        - available_statuses: List of allowed ticket statuses
+        - available_categories: List of allowed categories
+
+    Example:
+        get_stats()
+    """
+    st = require_storage()
+    result = st.get_stats()
+    result["project_root"] = _project_root
+    return result
+
+
+@mcp.tool()
 def init(project_root: Optional[str] = None) -> dict:
     """
     Initialize storage. Must be called before any other operations.
@@ -255,6 +281,7 @@ def ticket_create(
     recommendations: str = "",
     acceptance_criteria: str = "",
     status: str = "todo",
+    is_bug: bool = False,
 ) -> dict:
     """
     Create a new ticket (task/issue/work item).
@@ -270,10 +297,11 @@ def ticket_create(
         acceptance_criteria: What needs to be done to close this ticket (default: "")
         status: Initial status (default: "todo")
             Allowed: todo, in_progress, blocked, done, canceled
+        is_bug: Whether this ticket is a bug (default: false). Bugs are prioritized in ticket_next().
 
     Returns:
         Created ticket dict with id, milestone_id, title, description, category,
-        priority, status, version, depends_on[], blocked_by[], created_at, updated_at
+        priority, is_bug, status, version, depends_on[], blocked_by[], created_at, updated_at
 
     Example:
         ticket_create(
@@ -286,6 +314,12 @@ def ticket_create(
             acceptance_criteria="Users can register, login, logout",
             status="todo"
         )
+        ticket_create(
+            title="Login page crash",
+            category="frontend",
+            priority=5,
+            is_bug=True
+        )
     """
     st = require_storage()
     return st.ticket_create(
@@ -297,6 +331,7 @@ def ticket_create(
         recommendations=recommendations,
         acceptance_criteria=acceptance_criteria,
         status=status,
+        is_bug=is_bug,
     )
 
 
@@ -398,6 +433,7 @@ def ticket_update(id: str, patch: dict, expected_version: Optional[int] = None) 
             - status: todo | in_progress | blocked | done | canceled
             - priority: int
             - category: backend | frontend | infra | docs | research | other
+            - is_bug: bool (mark as bug)
             - recommendations: str
             - acceptance_criteria: str
             - milestone_id: str | null (assign to milestone or unassign)
@@ -413,7 +449,7 @@ def ticket_update(id: str, patch: dict, expected_version: Optional[int] = None) 
 
     Example:
         ticket_update(id="t-a1b2c3d4e5", patch={"status": "in_progress", "priority": 5})
-        ticket_update(id="t-a1b2c3d4e5", patch={"status": "done"}, expected_version=3)
+        ticket_update(id="t-a1b2c3d4e5", patch={"is_bug": True})
     """
     st = require_storage()
     return st.ticket_update(id, patch, expected_version)

@@ -130,6 +130,7 @@ class Storage:
                     status TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0,
                     category TEXT NOT NULL DEFAULT 'other',
+                    is_bug INTEGER NOT NULL DEFAULT 0,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL DEFAULT '',
                     recommendations TEXT NOT NULL DEFAULT '',
@@ -180,6 +181,14 @@ class Storage:
             except sqlite3.OperationalError:
                 conn.execute(
                     "ALTER TABLE milestones ADD COLUMN rank INTEGER NOT NULL DEFAULT 0"
+                )
+
+            # Migration: add is_bug column if it doesn't exist
+            try:
+                conn.execute("SELECT is_bug FROM tickets LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(
+                    "ALTER TABLE tickets ADD COLUMN is_bug INTEGER NOT NULL DEFAULT 0"
                 )
 
             conn.execute("DELETE FROM ticket_fts;")
@@ -370,6 +379,7 @@ class Storage:
         recommendations: str,
         acceptance_criteria: str,
         status: str,
+        is_bug: bool = False,
     ) -> dict:
         self._ticket_validate(status, category)
         tid = gen_id("t")
@@ -385,11 +395,11 @@ class Storage:
             conn.execute(
                 """
                 INSERT INTO tickets(
-                    id, milestone_id, status, priority, category, title,
+                    id, milestone_id, status, priority, category, is_bug, title,
                     description, recommendations, acceptance_criteria,
                     is_deleted, version, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
                 """,
                 (
                     tid,
@@ -397,6 +407,7 @@ class Storage:
                     status,
                     int(priority or 0),
                     category,
+                    1 if is_bug else 0,
                     title,
                     description or "",
                     recommendations or "",
@@ -509,6 +520,7 @@ class Storage:
             "status",
             "priority",
             "category",
+            "is_bug",
             "title",
             "description",
             "recommendations",
@@ -840,6 +852,85 @@ class Storage:
 
             return {"nodes": nodes, "edges": edges, "depth": depth}
 
+    # ---- Stats ----
+
+    def get_stats(self) -> dict:
+        with self.connect() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) as c FROM tickets WHERE is_deleted = 0"
+            ).fetchone()["c"]
+
+            by_status = {}
+            for status in ALLOWED_TICKET_STATUS:
+                c = conn.execute(
+                    "SELECT COUNT(*) as c FROM tickets WHERE status = ? AND is_deleted = 0",
+                    (status,),
+                ).fetchone()["c"]
+                by_status[status] = c
+
+            by_category = {}
+            for cat in ALLOWED_CATEGORY:
+                c = conn.execute(
+                    "SELECT COUNT(*) as c FROM tickets WHERE category = ? AND is_deleted = 0",
+                    (cat,),
+                ).fetchone()["c"]
+                by_category[cat] = c
+
+            bugs_total = conn.execute(
+                "SELECT COUNT(*) as c FROM tickets WHERE is_bug = 1 AND is_deleted = 0"
+            ).fetchone()["c"]
+            bugs_by_status = {}
+            for status in ("todo", "in_progress", "blocked", "done", "canceled"):
+                c = conn.execute(
+                    "SELECT COUNT(*) as c FROM tickets WHERE is_bug = 1 AND status = ? AND is_deleted = 0",
+                    (status,),
+                ).fetchone()["c"]
+                bugs_by_status[status] = c
+
+            by_priority = {}
+            for row in conn.execute(
+                "SELECT priority, COUNT(*) as c FROM tickets WHERE is_deleted = 0 GROUP BY priority ORDER BY priority DESC"
+            ).fetchall():
+                by_priority[str(row["priority"])] = row["c"]
+
+            milestones = []
+            for m in conn.execute(
+                "SELECT id, title, status FROM milestones ORDER BY rank DESC, priority DESC"
+            ).fetchall():
+                total_m = conn.execute(
+                    "SELECT COUNT(*) as c FROM tickets WHERE milestone_id = ? AND is_deleted = 0",
+                    (m["id"],),
+                ).fetchone()["c"]
+                done_m = conn.execute(
+                    "SELECT COUNT(*) as c FROM tickets WHERE milestone_id = ? AND status IN ('done', 'canceled') AND is_deleted = 0",
+                    (m["id"],),
+                ).fetchone()["c"]
+                progress = round((done_m / total_m * 100) if total_m > 0 else 0)
+                milestones.append(
+                    {
+                        "id": m["id"],
+                        "title": m["title"],
+                        "status": m["status"],
+                        "total": total_m,
+                        "done": done_m,
+                        "progress": progress,
+                    }
+                )
+
+            return {
+                "total_tickets": total,
+                "by_status": by_status,
+                "by_category": by_category,
+                "bugs": {
+                    "total": bugs_total,
+                    "by_status": bugs_by_status,
+                },
+                "by_priority": by_priority,
+                "milestones": milestones,
+                "available_statuses": sorted(ALLOWED_TICKET_STATUS),
+                "available_categories": sorted(ALLOWED_CATEGORY),
+            }
+
     # ---- Events ----
 
     def events_list(
@@ -886,47 +977,49 @@ class Storage:
             raise ValueError(f"Invalid category: {category}")
 
         with self.connect() as conn:
-            rows = conn.execute(
+            milestone_rows = conn.execute(
                 """
                 SELECT id FROM milestones
                 WHERE status NOT IN ('done', 'archived')
                 ORDER BY rank DESC, priority DESC, updated_at DESC
-                LIMIT 1
                 """
             ).fetchall()
-            if not rows:
+            if not milestone_rows:
                 return None
-            milestone_id = rows[0]["id"]
 
             open_statuses = ("todo", "in_progress", "blocked")
-            params: list[Any] = [milestone_id, *open_statuses]
-            where = "milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?)"
-            if category:
-                where += " AND category = ?"
-                params.append(category)
 
-            candidate_rows = conn.execute(
-                f"""
-                SELECT id, title, status, priority, category, milestone_id
-                FROM tickets
-                WHERE {where}
-                ORDER BY priority DESC, created_at ASC
-                """,
-                params,
-            ).fetchall()
+            for m_row in milestone_rows:
+                milestone_id = m_row["id"]
 
-            for row in candidate_rows:
-                tid = row["id"]
-                deps = conn.execute(
-                    """
-                    SELECT t.status FROM tickets t
-                    JOIN ticket_deps d ON d.depends_on_ticket_id = t.id
-                    WHERE d.ticket_id = ?
+                params: list[Any] = [milestone_id, *open_statuses]
+                where = "milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?)"
+                if category:
+                    where += " AND category = ?"
+                    params.append(category)
+
+                candidate_rows = conn.execute(
+                    f"""
+                    SELECT id, title, status, priority, category, milestone_id, is_bug
+                    FROM tickets
+                    WHERE {where}
+                    ORDER BY is_bug DESC, priority DESC, created_at ASC
                     """,
-                    (tid,),
+                    params,
                 ).fetchall()
-                blocked = any(d["status"] not in ("done", "canceled") for d in deps)
-                if not blocked:
-                    return self.ticket_get(tid)
+
+                for row in candidate_rows:
+                    tid = row["id"]
+                    deps = conn.execute(
+                        """
+                        SELECT t.status FROM tickets t
+                        JOIN ticket_deps d ON d.depends_on_ticket_id = t.id
+                        WHERE d.ticket_id = ?
+                        """,
+                        (tid,),
+                    ).fetchall()
+                    blocked = any(d["status"] not in ("done", "canceled") for d in deps)
+                    if not blocked:
+                        return self.ticket_get(tid)
 
             return None

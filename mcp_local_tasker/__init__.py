@@ -14,6 +14,7 @@ from .server import (
     dep_remove,
     events_list,
     get_project_root,
+    get_stats,
     init,
     milestone_create,
     milestone_delete,
@@ -49,6 +50,7 @@ __all__ = [
     "about",
     "init",
     "get_project_root",
+    "get_stats",
     # milestones
     "milestone_create",
     "milestone_list",
