@@ -17,8 +17,14 @@ The server runs as a **pure MCP process** (STDIN/STDOUT) and stores all data loc
 ### Installation
 
 ```bash
-# Clone and install dependencies
-pip install mcp
+# Install from GitHub (recommended)
+pip install git+https://github.com/jad7/mcp-local-tasker@v0.1.0
+
+# Or latest (may be unstable)
+pip install git+https://github.com/jad7/mcp-local-tasker
+
+# Or local editable (for development)
+pip install -e .
 ```
 
 ### Running
