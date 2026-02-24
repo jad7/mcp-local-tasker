@@ -37,7 +37,7 @@ def test_milestone_crud(storage):
         title="Test Milestone",
         description="Test description",
         status="planned",
-        priority=1
+        priority=1,
     )
     assert m["title"] == "Test Milestone"
     assert m["status"] == "planned"
@@ -55,13 +55,17 @@ def test_milestone_crud(storage):
     result = storage.milestone_delete(m["id"], force=False)
     assert result["status"] == "archived"
 
-    m4 = storage.milestone_create(title="To Delete", description="", status="planned", priority=0)
+    m4 = storage.milestone_create(
+        title="To Delete", description="", status="planned", priority=0
+    )
     result = storage.milestone_delete(m4["id"], force=True)
     assert result["ok"] is True
 
 
 def test_milestone_list_with_counts(storage):
-    ms = storage.milestone_create(title="MS1", description="", status="planned", priority=1)
+    ms = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=1
+    )
     t1 = storage.ticket_create(ms["id"], "T1", "", "backend", 1, "", "", "todo")
     t2 = storage.ticket_create(ms["id"], "T2", "", "backend", 1, "", "", "done")
 
@@ -83,19 +87,25 @@ def test_milestone_list_filtered(storage):
 
 
 def test_milestone_update_no_changes(storage):
-    m = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    m = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
     m2 = storage.milestone_update(m["id"], {})
     assert m2["id"] == m["id"]
 
 
 def test_milestone_update_invalid_status(storage):
-    m = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    m = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
     with pytest.raises(ValueError):
         storage.milestone_update(m["id"], {"status": "invalid"})
 
 
 def test_milestone_update_invalid_field(storage):
-    m = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    m = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
     with pytest.raises(ValueError, match="Unknown fields"):
         storage.milestone_update(m["id"], {"invalid_field": "value"})
 
@@ -111,7 +121,9 @@ def test_milestone_delete_not_found(storage):
 
 
 def test_ticket_crud(storage):
-    ms = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    ms = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
 
     t = storage.ticket_create(
         milestone_id=ms["id"],
@@ -121,7 +133,7 @@ def test_ticket_crud(storage):
         priority=5,
         recommendations="Recs",
         acceptance_criteria="AC",
-        status="todo"
+        status="todo",
     )
     assert t["title"] == "Test Ticket"
     assert t["status"] == "todo"
@@ -131,7 +143,9 @@ def test_ticket_crud(storage):
     assert t2["depends_on"] == []
     assert t2["blocked_by"] == []
 
-    t3 = storage.ticket_update(t["id"], {"status": "in_progress", "title": "Updated Title"}, None)
+    t3 = storage.ticket_update(
+        t["id"], {"status": "in_progress", "title": "Updated Title"}, None
+    )
     assert t3["status"] == "in_progress"
     assert t3["title"] == "Updated Title"
     assert t3["version"] == 2
@@ -149,11 +163,22 @@ def test_ticket_crud(storage):
 
 def test_ticket_create_with_invalid_milestone(storage):
     with pytest.raises(KeyError):
-        storage.ticket_create(milestone_id="ms-invalid", title="T1", description="", category="backend", priority=0, recommendations="", acceptance_criteria="", status="todo")
+        storage.ticket_create(
+            milestone_id="ms-invalid",
+            title="T1",
+            description="",
+            category="backend",
+            priority=0,
+            recommendations="",
+            acceptance_criteria="",
+            status="todo",
+        )
 
 
 def test_ticket_list_filters(storage):
-    ms = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    ms = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
     t1 = storage.ticket_create(ms["id"], "T1", "", "backend", 1, "", "", "todo")
     t2 = storage.ticket_create(ms["id"], "T2", "", "frontend", 1, "", "", "done")
 
@@ -208,8 +233,12 @@ def test_ticket_delete_not_found(storage):
 
 
 def test_ticket_search_fts(storage):
-    t1 = storage.ticket_create(None, "Python API endpoint", "Create REST API", "backend", 0, "", "", "todo")
-    t2 = storage.ticket_create(None, "Vue Component", "UI Component", "frontend", 0, "", "", "todo")
+    t1 = storage.ticket_create(
+        None, "Python API endpoint", "Create REST API", "backend", 0, "", "", "todo"
+    )
+    t2 = storage.ticket_create(
+        None, "Vue Component", "UI Component", "frontend", 0, "", "", "todo"
+    )
 
     results = storage.ticket_search("API", None, None, None, None, 10)
     assert len(results) == 1
@@ -289,7 +318,9 @@ def test_cycle_detection_disabled(storage):
 
 
 def test_ticket_graph(storage):
-    ms = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    ms = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
     t1 = storage.ticket_create(ms["id"], "T1", "", "backend", 0, "", "", "todo")
     t2 = storage.ticket_create(ms["id"], "T2", "", "backend", 0, "", "", "todo")
 
@@ -324,7 +355,9 @@ def test_ticket_graph_depth_limit(storage):
 
 
 def test_events(storage):
-    m = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
+    m = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
 
     events = storage.events_list("milestone", None, 10)
     assert len(events) == 1
@@ -336,7 +369,9 @@ def test_events(storage):
 
 def test_events_limit(storage):
     for i in range(10):
-        storage.milestone_create(title=f"MS{i}", description="", status="planned", priority=0)
+        storage.milestone_create(
+            title=f"MS{i}", description="", status="planned", priority=0
+        )
 
     events = storage.events_list(None, None, 5)
     assert len(events) == 5
@@ -368,7 +403,9 @@ def test_version_conflict_not_found(storage):
 
 def test_invalid_status(storage):
     with pytest.raises(ValueError, match="Invalid milestone status"):
-        storage.milestone_create(title="MS1", description="", status="invalid_status", priority=0)
+        storage.milestone_create(
+            title="MS1", description="", status="invalid_status", priority=0
+        )
 
     with pytest.raises(ValueError, match="Invalid ticket status"):
         storage.ticket_create(None, "T1", "", "backend", 0, "", "", "invalid_status")
@@ -393,7 +430,9 @@ def test_reachable_function(storage):
 
 
 def test_fts_upsert_on_update(storage):
-    t = storage.ticket_create(None, "UniqueWord123 Title", "Original desc", "backend", 0, "", "", "todo")
+    t = storage.ticket_create(
+        None, "UniqueWord123 Title", "Original desc", "backend", 0, "", "", "todo"
+    )
 
     storage.ticket_update(t["id"], {"title": "Different456 Title"}, None)
 
@@ -405,7 +444,9 @@ def test_fts_upsert_on_update(storage):
 
 
 def test_soft_delete_removes_from_fts(storage):
-    t = storage.ticket_create(None, "To Delete", "description", "backend", 0, "", "", "todo")
+    t = storage.ticket_create(
+        None, "To Delete", "description", "backend", 0, "", "", "todo"
+    )
 
     storage.ticket_delete(t["id"], False)
 
@@ -442,7 +483,9 @@ def test_ticket_list_statuses_filter(storage):
     t4 = storage.ticket_create(None, "T4", "", "backend", 0, "", "", "canceled")
 
     # All open tickets
-    open_tickets = storage.ticket_list(None, None, ["todo", "in_progress", "blocked"], None, False, "created")
+    open_tickets = storage.ticket_list(
+        None, None, ["todo", "in_progress", "blocked"], None, False, "created"
+    )
     assert len(open_tickets) == 2
     ids = [t["id"] for t in open_tickets]
     assert t1["id"] in ids
@@ -460,8 +503,12 @@ def test_milestone_not_found_error(storage):
 
 
 def test_ticket_search_by_status_and_category(storage):
-    t1 = storage.ticket_create(None, "Backend task one", "", "backend", 0, "", "", "todo")
-    t2 = storage.ticket_create(None, "Backend task two", "", "backend", 0, "", "", "done")
+    t1 = storage.ticket_create(
+        None, "Backend task one", "", "backend", 0, "", "", "todo"
+    )
+    t2 = storage.ticket_create(
+        None, "Backend task two", "", "backend", 0, "", "", "done"
+    )
     t3 = storage.ticket_create(None, "Frontend task", "", "frontend", 0, "", "", "todo")
 
     results = storage.ticket_search("task one", None, None, None, None, 10)
@@ -470,8 +517,12 @@ def test_ticket_search_by_status_and_category(storage):
 
 
 def test_ticket_graph_all_milestones(storage):
-    ms1 = storage.milestone_create(title="MS1", description="", status="planned", priority=0)
-    ms2 = storage.milestone_create(title="MS2", description="", status="planned", priority=0)
+    ms1 = storage.milestone_create(
+        title="MS1", description="", status="planned", priority=0
+    )
+    ms2 = storage.milestone_create(
+        title="MS2", description="", status="planned", priority=0
+    )
     t1 = storage.ticket_create(ms1["id"], "T1", "", "backend", 0, "", "", "todo")
     t2 = storage.ticket_create(ms2["id"], "T2", "", "backend", 0, "", "", "todo")
 
@@ -489,7 +540,9 @@ def test_output_inline_mode(storage):
 def test_output_file_mode_json(storage, tmp_path):
     t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     output_path = tmp_path / "ticket.json"
-    result = storage.ticket_get(t["id"], output={"mode": "file", "format": "json", "path": str(output_path)})
+    result = storage.ticket_get(
+        t["id"], output={"mode": "file", "format": "json", "path": str(output_path)}
+    )
     assert result["ok"] is True
     assert result["written_to"] == str(output_path)
     assert result["count"] == 1
@@ -499,7 +552,9 @@ def test_output_file_mode_json(storage, tmp_path):
 def test_output_file_mode_md(storage, tmp_path):
     t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     output_path = tmp_path / "ticket.md"
-    result = storage.ticket_get(t["id"], output={"mode": "file", "format": "md", "path": str(output_path)})
+    result = storage.ticket_get(
+        t["id"], output={"mode": "file", "format": "md", "path": str(output_path)}
+    )
     assert result["ok"] is True
     assert output_path.exists()
     content = output_path.read_text()
@@ -510,7 +565,15 @@ def test_output_file_mode_list(storage, tmp_path):
     t1 = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     t2 = storage.ticket_create(None, "T2", "", "frontend", 0, "", "", "done")
     output_path = tmp_path / "tickets.json"
-    result = storage.ticket_list(None, None, None, None, False, "created", output={"mode": "file", "format": "json", "path": str(output_path)})
+    result = storage.ticket_list(
+        None,
+        None,
+        None,
+        None,
+        False,
+        "created",
+        output={"mode": "file", "format": "json", "path": str(output_path)},
+    )
     assert result["ok"] is True
     assert result["count"] == 2
 
@@ -518,7 +581,15 @@ def test_output_file_mode_list(storage, tmp_path):
 def test_output_file_mode_list_md(storage, tmp_path):
     t1 = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     output_path = tmp_path / "tickets.md"
-    result = storage.ticket_list(None, None, None, None, False, "created", output={"mode": "file", "format": "md", "path": str(output_path)})
+    result = storage.ticket_list(
+        None,
+        None,
+        None,
+        None,
+        False,
+        "created",
+        output={"mode": "file", "format": "md", "path": str(output_path)},
+    )
     assert output_path.exists()
     content = output_path.read_text()
     assert "T1" in content
@@ -526,9 +597,19 @@ def test_output_file_mode_list_md(storage, tmp_path):
 
 
 def test_output_file_mode_search(storage, tmp_path):
-    t = storage.ticket_create(None, "Test task", "description", "backend", 0, "", "", "todo")
+    t = storage.ticket_create(
+        None, "Test task", "description", "backend", 0, "", "", "todo"
+    )
     output_path = tmp_path / "search.json"
-    result = storage.ticket_search("Test", None, None, None, None, 10, output={"mode": "file", "format": "json", "path": str(output_path)})
+    result = storage.ticket_search(
+        "Test",
+        None,
+        None,
+        None,
+        None,
+        10,
+        output={"mode": "file", "format": "json", "path": str(output_path)},
+    )
     assert result["ok"] is True
     assert result["count"] == 1
 
@@ -537,7 +618,9 @@ def test_output_invalid_format(storage, tmp_path):
     t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     output_path = tmp_path / "ticket.xyz"
     with pytest.raises(ValueError, match="Unknown format"):
-        storage.ticket_get(t["id"], output={"mode": "file", "format": "xyz", "path": str(output_path)})
+        storage.ticket_get(
+            t["id"], output={"mode": "file", "format": "xyz", "path": str(output_path)}
+        )
 
 
 def test_output_invalid_mode(storage):
@@ -550,3 +633,143 @@ def test_output_file_mode_without_path(storage):
     t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     with pytest.raises(ValueError, match="path is required"):
         storage.ticket_get(t["id"], output={"mode": "file", "format": "json"})
+
+
+def test_ticket_create_with_is_bug(storage):
+    t = storage.ticket_create(
+        None, "Bug task", "description", "backend", 5, "", "", "todo", is_bug=True
+    )
+    assert t["is_bug"] == 1
+    assert t["priority"] == 5
+
+
+def test_ticket_update_is_bug(storage):
+    t = storage.ticket_create(None, "Regular task", "", "backend", 5, "", "", "todo")
+    assert t["is_bug"] == 0
+
+    t2 = storage.ticket_update(t["id"], {"is_bug": True}, None)
+    assert t2["is_bug"] == 1
+
+    t3 = storage.ticket_update(t["id"], {"is_bug": False}, None)
+    assert t3["is_bug"] == 0
+
+
+def test_ticket_next_bug_priority(storage):
+    m = storage.milestone_create("Test", "", "active", 1)
+
+    t1 = storage.ticket_create(
+        m["id"], "Regular task", "", "backend", 5, "", "", "todo"
+    )
+    bug = storage.ticket_create(
+        m["id"], "Bug task", "", "backend", 5, "", "", "todo", is_bug=True
+    )
+
+    next_t = storage.ticket_next()
+    assert next_t["id"] == bug["id"]
+    assert next_t["is_bug"] == 1
+
+
+def test_ticket_next_category_filter_with_bug(storage):
+    m = storage.milestone_create("Test", "", "active", 1)
+
+    storage.ticket_create(
+        m["id"], "Backend bug", "", "backend", 5, "", "", "todo", is_bug=True
+    )
+    storage.ticket_create(m["id"], "Frontend task", "", "frontend", 5, "", "", "todo")
+
+    next_backend = storage.ticket_next(category="backend")
+    assert next_backend["category"] == "backend"
+
+    next_frontend = storage.ticket_next(category="frontend")
+    assert next_frontend["category"] == "frontend"
+
+
+def test_ticket_next_empty_milestone(storage):
+    m1 = storage.milestone_create("Empty", "", "active", 10)
+    m2 = storage.milestone_create("With task", "", "active", 5)
+    storage.ticket_create(m2["id"], "Task", "", "backend", 1, "", "", "todo")
+
+    next_t = storage.ticket_next()
+    assert next_t["milestone_id"] == m2["id"]
+
+
+def test_ticket_next_all_completed(storage):
+    m = storage.milestone_create("Done", "", "active", 1)
+    t = storage.ticket_create(m["id"], "Task", "", "backend", 1, "", "", "todo")
+    storage.ticket_update(t["id"], {"status": "done"}, None)
+
+    next_t = storage.ticket_next()
+    assert next_t is None
+
+
+def test_get_stats_basic(storage):
+    m = storage.milestone_create("Test", "", "planned", 5)
+    storage.ticket_create(m["id"], "Task1", "", "backend", 10, "", "", "todo")
+    storage.ticket_create(m["id"], "Task2", "", "frontend", 5, "", "", "done")
+    storage.ticket_create(m["id"], "Bug", "", "backend", 8, "", "", "todo", is_bug=True)
+
+    stats = storage.get_stats()
+
+    assert stats["total_tickets"] == 3
+    assert stats["by_status"]["todo"] == 2
+    assert stats["by_status"]["done"] == 1
+    assert stats["by_category"]["backend"] == 2
+    assert stats["by_category"]["frontend"] == 1
+    assert stats["bugs"]["total"] == 1
+    assert stats["bugs"]["by_status"]["todo"] == 1
+    assert "10" in stats["by_priority"]
+    assert len(stats["milestones"]) == 1
+    assert stats["milestones"][0]["progress"] == 33
+
+
+def test_get_stats_empty(storage):
+    stats = storage.get_stats()
+
+    assert stats["total_tickets"] == 0
+    assert stats["bugs"]["total"] == 0
+    assert stats["milestones"] == []
+
+
+def test_group_by_milestone_export(storage, tmp_path):
+    m1 = storage.milestone_create("Milestone1", "", "active", 1)
+    m2 = storage.milestone_create("Milestone2", "", "active", 1)
+
+    storage.ticket_create(m1["id"], "Task1", "", "backend", 1, "", "", "todo")
+    storage.ticket_create(m2["id"], "Task2", "", "frontend", 1, "", "", "todo")
+
+    output_path = tmp_path / "tickets.md"
+    storage.ticket_list(
+        None,
+        None,
+        ["todo"],
+        None,
+        False,
+        "created",
+        output={
+            "mode": "file",
+            "format": "md",
+            "path": str(output_path),
+            "group_by_milestone": True,
+        },
+    )
+
+    content = output_path.read_text()
+    assert "Milestone:" in content
+    assert "Task1" in content
+    assert "Task2" in content
+
+
+def test_milestone_rank(storage):
+    m1 = storage.milestone_create("First", "", "planned", 1)
+    m2 = storage.milestone_create("Second", "", "planned", 10)
+
+    milestones = storage.milestone_list(None, False)
+    assert milestones[0]["id"] == m2["id"]
+    assert milestones[1]["id"] == m1["id"]
+
+
+def test_milestone_update_rank(storage):
+    m = storage.milestone_create("Test", "", "planned", 1)
+
+    m2 = storage.milestone_update(m["id"], {"rank": 100})
+    assert m2["rank"] == 100
