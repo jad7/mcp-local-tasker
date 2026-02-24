@@ -341,10 +341,19 @@ class Storage:
         self,
         milestone_id: Optional[str],
         status: Optional[str],
+        statuses: Optional[list[str]],
         category: Optional[str],
         include_deleted: bool,
         sort: str,
     ) -> list[dict]:
+        if status and statuses:
+            raise ValueError("Cannot use both 'status' and 'statuses' at once")
+
+        if statuses:
+            for s in statuses:
+                if s not in ALLOWED_TICKET_STATUS:
+                    raise ValueError(f"Invalid ticket status: {s}")
+
         with self.connect() as conn:
             where = []
             params: list[Any] = []
@@ -353,7 +362,11 @@ class Storage:
                 where.append("milestone_id = ?")
                 params.append(milestone_id)
 
-            if status:
+            if statuses:
+                placeholders = ",".join("?" * len(statuses))
+                where.append(f"status IN ({placeholders})")
+                params.extend(statuses)
+            elif status:
                 where.append("status = ?")
                 params.append(status)
 

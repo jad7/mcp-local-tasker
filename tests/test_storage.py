@@ -136,7 +136,7 @@ def test_ticket_crud(storage):
     assert t3["title"] == "Updated Title"
     assert t3["version"] == 2
 
-    tickets = storage.ticket_list(None, None, None, False, "priority")
+    tickets = storage.ticket_list(None, None, None, None, False, "priority")
     assert len(tickets) == 1
 
     result = storage.ticket_delete(t["id"], hard=False)
@@ -157,13 +157,13 @@ def test_ticket_list_filters(storage):
     t1 = storage.ticket_create(ms["id"], "T1", "", "backend", 1, "", "", "todo")
     t2 = storage.ticket_create(ms["id"], "T2", "", "frontend", 1, "", "", "done")
 
-    by_milestone = storage.ticket_list(ms["id"], None, None, False, "priority")
+    by_milestone = storage.ticket_list(ms["id"], None, None, None, False, "priority")
     assert len(by_milestone) == 2
 
-    by_status = storage.ticket_list(None, "done", None, False, "priority")
+    by_status = storage.ticket_list(None, "done", None, None, False, "priority")
     assert len(by_status) == 1
 
-    by_category = storage.ticket_list(None, None, "backend", False, "priority")
+    by_category = storage.ticket_list(None, None, None, "backend", False, "priority")
     assert len(by_category) == 1
 
 
@@ -171,10 +171,10 @@ def test_ticket_list_sorting(storage):
     t1 = storage.ticket_create(None, "T1", "", "backend", 1, "", "", "todo")
     t2 = storage.ticket_create(None, "T2", "", "backend", 10, "", "", "todo")
 
-    by_priority = storage.ticket_list(None, None, None, False, "priority")
+    by_priority = storage.ticket_list(None, None, None, None, False, "priority")
     assert by_priority[0]["id"] == t2["id"]
 
-    by_created = storage.ticket_list(None, None, None, False, "created")
+    by_created = storage.ticket_list(None, None, None, None, False, "created")
     assert len(by_created) == 2
 
 
@@ -428,11 +428,30 @@ def test_ticket_list_include_deleted(storage):
     t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
     storage.ticket_delete(t["id"], False)
 
-    deleted = storage.ticket_list(None, None, None, True, "priority")
+    deleted = storage.ticket_list(None, None, None, None, True, "priority")
     assert len(deleted) == 1
 
-    active = storage.ticket_list(None, None, None, False, "priority")
+    active = storage.ticket_list(None, None, None, None, False, "priority")
     assert len(active) == 0
+
+
+def test_ticket_list_statuses_filter(storage):
+    t1 = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    t2 = storage.ticket_create(None, "T2", "", "backend", 0, "", "", "in_progress")
+    t3 = storage.ticket_create(None, "T3", "", "backend", 0, "", "", "done")
+    t4 = storage.ticket_create(None, "T4", "", "backend", 0, "", "", "canceled")
+
+    # All open tickets
+    open_tickets = storage.ticket_list(None, None, ["todo", "in_progress", "blocked"], None, False, "created")
+    assert len(open_tickets) == 2
+    ids = [t["id"] for t in open_tickets]
+    assert t1["id"] in ids
+    assert t2["id"] in ids
+
+    # Only done
+    done = storage.ticket_list(None, None, ["done"], None, False, "created")
+    assert len(done) == 1
+    assert done[0]["id"] == t3["id"]
 
 
 def test_milestone_not_found_error(storage):

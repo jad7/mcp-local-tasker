@@ -297,6 +297,7 @@ def ticket_get(id: str) -> dict:
 def ticket_list(
     milestone_id: Optional[str] = None,
     status: Optional[str] = None,
+    statuses: Optional[list[str]] = None,
     category: Optional[str] = None,
     include_deleted: bool = False,
     sort: str = "priority",
@@ -306,8 +307,10 @@ def ticket_list(
     
     Args:
         milestone_id: Filter by milestone (optional, format: ms-xxxxxxxxxx)
-        status: Filter by status (optional)
+        status: Filter by single status (optional). Cannot be used with statuses.
             Allowed: todo, in_progress, blocked, done, canceled
+        statuses: Filter by multiple statuses (optional). Cannot be used with status.
+            Example: ["todo", "in_progress", "blocked"] for open tickets
         category: Filter by category (optional)
             Allowed: backend, frontend, infra, docs, research, other
         include_deleted: Include soft-deleted tickets (default: false)
@@ -321,16 +324,21 @@ def ticket_list(
     
     Example:
         ticket_list(milestone_id="ms-a1b2c3d4e5", status="todo", sort="priority")
+        ticket_list(statuses=["todo", "in_progress", "blocked"])  # all open tickets
     """
     st = require_storage()
     if status and status not in ALLOWED_TICKET_STATUS:
         raise ValueError(f"Invalid ticket status: {status}")
+    if statuses:
+        for s in statuses:
+            if s not in ALLOWED_TICKET_STATUS:
+                raise ValueError(f"Invalid ticket status: {s}")
     if category and category not in ALLOWED_CATEGORY:
         raise ValueError(f"Invalid category: {category}")
     if sort not in {"priority", "updated", "created"}:
         raise ValueError("sort must be one of: priority, updated, created")
     return st.ticket_list(
-        milestone_id, status, category, bool(include_deleted), sort
+        milestone_id, status, statuses, category, bool(include_deleted), sort
     )
 
 
