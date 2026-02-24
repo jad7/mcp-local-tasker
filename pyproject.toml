@@ -1,3 +1,17 @@
+[project]
+name = "mcp-local-tasker"
+version = "0.1.0"
+description = "MCP server for local milestone + ticket tracking"
+authors = [{name = "Developer"}]
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
+
+[project.scripts]
+mcp-local-tasker = "mcp_local_tasker:main"
+
 [tool.poetry]
 name = "mcp-local-tasker"
 version = "0.1.0"
@@ -19,6 +33,3 @@ testpaths = ["tests"]
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[project.scripts]
-mcp-local-tasker = "mcp_local_tasker:main"
