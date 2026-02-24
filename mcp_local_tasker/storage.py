@@ -16,6 +16,7 @@ from .constants import (
     gen_id,
     gen_ticket_id,
     ensure_dir,
+    __version__,
 )
 
 
@@ -973,6 +974,7 @@ class Storage:
                 )
 
             return {
+                "version": __version__,
                 "total_tickets": total,
                 "by_status": by_status,
                 "by_category": by_category,

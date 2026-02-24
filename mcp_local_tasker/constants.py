@@ -2,7 +2,15 @@ import json
 import os
 import time
 import uuid
+from functools import lru_cache
 from typing import Any
+
+try:
+    from importlib.metadata import version
+
+    __version__ = version("mcp-local-tasker")
+except Exception:
+    __version__ = "0.0.0"
 
 ALLOWED_TICKET_STATUS = {"todo", "in_progress", "blocked", "done", "canceled"}
 ALLOWED_MILESTONE_STATUS = {"planned", "active", "done", "archived"}
