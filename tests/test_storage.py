@@ -477,3 +477,76 @@ def test_ticket_graph_all_milestones(storage):
 
     graph = storage.ticket_graph(None, 5)
     assert len(graph["nodes"]) == 2
+
+
+def test_output_inline_mode(storage):
+    t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    result = storage.ticket_get(t["id"], output=None)
+    assert isinstance(result, dict)
+    assert result["id"] == t["id"]
+
+
+def test_output_file_mode_json(storage, tmp_path):
+    t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    output_path = tmp_path / "ticket.json"
+    result = storage.ticket_get(t["id"], output={"mode": "file", "format": "json", "path": str(output_path)})
+    assert result["ok"] is True
+    assert result["written_to"] == str(output_path)
+    assert result["count"] == 1
+    assert output_path.exists()
+
+
+def test_output_file_mode_md(storage, tmp_path):
+    t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    output_path = tmp_path / "ticket.md"
+    result = storage.ticket_get(t["id"], output={"mode": "file", "format": "md", "path": str(output_path)})
+    assert result["ok"] is True
+    assert output_path.exists()
+    content = output_path.read_text()
+    assert "T1" in content
+
+
+def test_output_file_mode_list(storage, tmp_path):
+    t1 = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    t2 = storage.ticket_create(None, "T2", "", "frontend", 0, "", "", "done")
+    output_path = tmp_path / "tickets.json"
+    result = storage.ticket_list(None, None, None, None, False, "created", output={"mode": "file", "format": "json", "path": str(output_path)})
+    assert result["ok"] is True
+    assert result["count"] == 2
+
+
+def test_output_file_mode_list_md(storage, tmp_path):
+    t1 = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    output_path = tmp_path / "tickets.md"
+    result = storage.ticket_list(None, None, None, None, False, "created", output={"mode": "file", "format": "md", "path": str(output_path)})
+    assert output_path.exists()
+    content = output_path.read_text()
+    assert "T1" in content
+    assert "backend" in content
+
+
+def test_output_file_mode_search(storage, tmp_path):
+    t = storage.ticket_create(None, "Test task", "description", "backend", 0, "", "", "todo")
+    output_path = tmp_path / "search.json"
+    result = storage.ticket_search("Test", None, None, None, None, 10, output={"mode": "file", "format": "json", "path": str(output_path)})
+    assert result["ok"] is True
+    assert result["count"] == 1
+
+
+def test_output_invalid_format(storage, tmp_path):
+    t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    output_path = tmp_path / "ticket.xyz"
+    with pytest.raises(ValueError, match="Unknown format"):
+        storage.ticket_get(t["id"], output={"mode": "file", "format": "xyz", "path": str(output_path)})
+
+
+def test_output_invalid_mode(storage):
+    t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    with pytest.raises(ValueError, match="Unknown mode"):
+        storage.ticket_get(t["id"], output={"mode": "ftp"})
+
+
+def test_output_file_mode_without_path(storage):
+    t = storage.ticket_create(None, "T1", "", "backend", 0, "", "", "todo")
+    with pytest.raises(ValueError, match="path is required"):
+        storage.ticket_get(t["id"], output={"mode": "file", "format": "json"})
