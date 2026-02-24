@@ -17,22 +17,47 @@ from .constants import (
 )
 
 
-def format_output(data: Any, format: str) -> str:
+def format_output(data: Any, format: str, group_by_milestone: bool = False) -> str:
     if format == "json":
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif format == "md":
         if isinstance(data, list):
-            lines = ["# Tickets\n"]
-            for item in data:
-                lines.append(
-                    f"- **{item.get('title', 'N/A')}** ({item.get('status', 'N/A')})"
-                )
-                lines.append(f"  - ID: {item.get('id', 'N/A')}")
-                lines.append(f"  - Category: {item.get('category', 'N/A')}")
-                if item.get("description"):
-                    lines.append(f"  - Description: {item.get('description', '')}")
-                lines.append("")
-            return "\n".join(lines)
+            if group_by_milestone:
+                from collections import defaultdict
+
+                by_milestone = defaultdict(list)
+                for item in data:
+                    mid = item.get("milestone_id", "no-milestone")
+                    by_milestone[mid].append(item)
+
+                lines = ["# Tickets\n"]
+                for mid, items in by_milestone.items():
+                    lines.append(f"## Milestone: {mid}\n")
+                    for item in items:
+                        lines.append(
+                            f"- **{item.get('title', 'N/A')}** ({item.get('status', 'N/A')})"
+                        )
+                        lines.append(f"  - ID: {item.get('id', 'N/A')}")
+                        lines.append(f"  - Category: {item.get('category', 'N/A')}")
+                        if item.get("description"):
+                            lines.append(
+                                f"  - Description: {item.get('description', '')}"
+                            )
+                        lines.append("")
+                    lines.append("")
+                return "\n".join(lines)
+            else:
+                lines = ["# Tickets\n"]
+                for item in data:
+                    lines.append(
+                        f"- **{item.get('title', 'N/A')}** ({item.get('status', 'N/A')})"
+                    )
+                    lines.append(f"  - ID: {item.get('id', 'N/A')}")
+                    lines.append(f"  - Category: {item.get('category', 'N/A')}")
+                    if item.get("description"):
+                        lines.append(f"  - Description: {item.get('description', '')}")
+                    lines.append("")
+                return "\n".join(lines)
         elif isinstance(data, dict):
             lines = ["# Ticket\n"]
             for key, value in data.items():
@@ -48,6 +73,7 @@ def write_output(data: Any, output: dict) -> dict:
     mode = output.get("mode", "inline")
     format = output.get("format", "json")
     path = output.get("path")
+    group_by_milestone = output.get("group_by_milestone", False)
 
     if mode == "inline":
         return data
@@ -57,7 +83,7 @@ def write_output(data: Any, output: dict) -> dict:
             raise ValueError("path is required when mode is 'file'")
 
         ensure_dir(os.path.dirname(path))
-        content = format_output(data, format)
+        content = format_output(data, format, group_by_milestone)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -93,6 +119,7 @@ class Storage:
                     description TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0,
+                    rank INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -147,6 +174,14 @@ class Storage:
                 """
             )
 
+            # Migration: add rank column if it doesn't exist
+            try:
+                conn.execute("SELECT rank FROM milestones LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(
+                    "ALTER TABLE milestones ADD COLUMN rank INTEGER NOT NULL DEFAULT 0"
+                )
+
             conn.execute("DELETE FROM ticket_fts;")
             conn.execute(
                 """
@@ -173,26 +208,41 @@ class Storage:
     # ---- Milestones ----
 
     def milestone_create(
-        self, title: str, description: str, status: str, priority: int
+        self,
+        title: str,
+        description: str,
+        status: str,
+        priority: int,
+        rank: Optional[int] = None,
     ) -> dict:
         if status not in ALLOWED_MILESTONE_STATUS:
             raise ValueError(f"Invalid milestone status: {status}")
         mid = gen_id("ms")
         ts = now_ts()
+        rank = rank if rank is not None else priority
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO milestones(id, title, description, status, priority, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO milestones(id, title, description, status, priority, rank, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (mid, title, description or "", status, int(priority or 0), ts, ts),
+                (
+                    mid,
+                    title,
+                    description or "",
+                    status,
+                    int(priority or 0),
+                    int(rank),
+                    ts,
+                    ts,
+                ),
             )
             self.log_event(
                 conn,
                 "milestone",
                 mid,
                 "create",
-                {"title": title, "status": status, "priority": priority},
+                {"title": title, "status": status, "priority": priority, "rank": rank},
             )
         return self.milestone_get(mid)
 
@@ -212,7 +262,7 @@ class Storage:
             if status:
                 q += " WHERE status = ?"
                 params.append(status)
-            q += " ORDER BY priority DESC, updated_at DESC"
+            q += " ORDER BY rank DESC, priority DESC, updated_at DESC"
 
             rows = [dict(r) for r in conn.execute(q, params).fetchall()]
             if not include_counts:
@@ -236,7 +286,7 @@ class Storage:
             return rows
 
     def milestone_update(self, milestone_id: str, patch: dict) -> dict:
-        allowed = {"title", "description", "status", "priority"}
+        allowed = {"title", "description", "status", "priority", "rank"}
         unknown = set(patch.keys()) - allowed
         if unknown:
             raise ValueError(f"Unknown fields in patch: {sorted(unknown)}")
@@ -507,7 +557,47 @@ class Storage:
 
             self._fts_upsert(conn, ticket_id)
             self.log_event(conn, "ticket", ticket_id, "update", {"patch": patch})
+
+            if "status" in patch:
+                self._maybe_update_milestone_status(conn, ticket_id)
+
         return self.ticket_get(ticket_id)
+
+    def _maybe_update_milestone_status(
+        self, conn: sqlite3.Connection, ticket_id: str
+    ) -> None:
+        row = conn.execute(
+            "SELECT milestone_id FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
+        if not row or not row["milestone_id"]:
+            return
+
+        milestone_id = row["milestone_id"]
+
+        open_tickets = conn.execute(
+            """
+            SELECT COUNT(*) as c FROM tickets
+            WHERE milestone_id = ? AND is_deleted = 0 AND status NOT IN ('done', 'canceled')
+            """,
+            (milestone_id,),
+        ).fetchone()["c"]
+
+        if open_tickets == 0:
+            m = conn.execute(
+                "SELECT status FROM milestones WHERE id = ?", (milestone_id,)
+            ).fetchone()
+            if m and m["status"] not in ("done", "archived"):
+                conn.execute(
+                    "UPDATE milestones SET status = 'done', updated_at = ? WHERE id = ?",
+                    (now_ts(), milestone_id),
+                )
+                self.log_event(
+                    conn,
+                    "milestone",
+                    milestone_id,
+                    "auto_done",
+                    {"reason": "all_tickets_completed"},
+                )
 
     def ticket_set_status(
         self, ticket_id: str, status: str, expected_version: Optional[int]
@@ -516,13 +606,18 @@ class Storage:
 
     def ticket_delete(self, ticket_id: str, hard: bool) -> dict:
         with self.connect() as conn:
+            row = conn.execute(
+                "SELECT milestone_id FROM tickets WHERE id = ?", (ticket_id,)
+            ).fetchone()
+            milestone_id = row["milestone_id"] if row else None
+
             if hard:
                 cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
                 if cur.rowcount == 0:
                     raise KeyError(f"Ticket not found: {ticket_id}")
                 conn.execute("DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,))
                 self.log_event(conn, "ticket", ticket_id, "delete", {"hard": True})
-                return {"ok": True, "hard": True}
+                result = {"ok": True, "hard": True}
             else:
                 cur = conn.execute(
                     "UPDATE tickets SET is_deleted = 1, updated_at = ?, version = version + 1 WHERE id = ?",
@@ -532,7 +627,12 @@ class Storage:
                     raise KeyError(f"Ticket not found: {ticket_id}")
                 conn.execute("DELETE FROM ticket_fts WHERE ticket_id = ?", (ticket_id,))
                 self.log_event(conn, "ticket", ticket_id, "delete", {"hard": False})
-                return {"ok": True, "hard": False}
+                result = {"ok": True, "hard": False}
+
+            if milestone_id:
+                self._maybe_update_milestone_status(conn, ticket_id)
+
+            return result
 
     def ticket_search(
         self,
@@ -781,13 +881,16 @@ class Storage:
 
     # ---- Next Task (Iterator) ----
 
-    def ticket_next(self) -> Optional[dict]:
+    def ticket_next(self, category: Optional[str] = None) -> Optional[dict]:
+        if category and category not in ALLOWED_CATEGORY:
+            raise ValueError(f"Invalid category: {category}")
+
         with self.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id FROM milestones
                 WHERE status NOT IN ('done', 'archived')
-                ORDER BY priority DESC, updated_at DESC
+                ORDER BY rank DESC, priority DESC, updated_at DESC
                 LIMIT 1
                 """
             ).fetchall()
@@ -796,14 +899,20 @@ class Storage:
             milestone_id = rows[0]["id"]
 
             open_statuses = ("todo", "in_progress", "blocked")
+            params: list[Any] = [milestone_id, *open_statuses]
+            where = "milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?)"
+            if category:
+                where += " AND category = ?"
+                params.append(category)
+
             candidate_rows = conn.execute(
-                """
+                f"""
                 SELECT id, title, status, priority, category, milestone_id
                 FROM tickets
-                WHERE milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?)
+                WHERE {where}
                 ORDER BY priority DESC, created_at ASC
                 """,
-                (milestone_id, *open_statuses),
+                params,
             ).fetchall()
 
             for row in candidate_rows:

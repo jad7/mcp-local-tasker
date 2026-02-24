@@ -13,6 +13,7 @@ from .server import (
     dep_list,
     dep_remove,
     events_list,
+    get_project_root,
     init,
     milestone_create,
     milestone_delete,
@@ -47,6 +48,7 @@ __all__ = [
     "mcp",
     "about",
     "init",
+    "get_project_root",
     # milestones
     "milestone_create",
     "milestone_list",

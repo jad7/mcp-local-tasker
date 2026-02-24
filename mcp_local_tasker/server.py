@@ -14,6 +14,7 @@ from .storage import Storage
 mcp = FastMCP("local-task-tracker")
 
 _storage: Optional[Storage] = None
+_project_root: Optional[str] = None
 
 
 def require_storage() -> Storage:
@@ -45,6 +46,7 @@ def about() -> dict:
             "Dependencies are directed edges: ticket depends on another ticket.",
             "Events are append-only for auditability.",
             "Ticket updates support optimistic concurrency with version.",
+            "Milestone status auto-updates to 'done' when all tickets are completed.",
         ],
         "ticket_status": sorted(ALLOWED_TICKET_STATUS),
         "milestone_status": sorted(ALLOWED_MILESTONE_STATUS),
@@ -53,9 +55,25 @@ def about() -> dict:
 
 
 @mcp.tool()
+def get_project_root() -> Optional[str]:
+    """
+    Get the current project root directory.
+
+    Returns:
+        The project root path if initialized, None otherwise.
+
+    Example:
+        get_project_root()  # Returns "/path/to/project" or None
+    """
+    return _project_root
+
+
+@mcp.tool()
 def init(project_root: Optional[str] = None) -> dict:
     """
     Initialize storage. Must be called before any other operations.
+
+    If already initialized with the same path, does nothing (idempotent).
 
     Creates SQLite database at <project_root>/.project/tasks.db
     If project_root is not provided, uses current working directory.
@@ -69,8 +87,15 @@ def init(project_root: Optional[str] = None) -> dict:
     Example:
         init("/Users/me/projects/myapp")
     """
-    global _storage
+    global _storage, _project_root
+
     root = project_root or os.getcwd()
+    root = os.path.abspath(root)
+
+    if _storage is not None and _project_root == root:
+        db_path = os.path.join(root, ".project", "tasks.db")
+        return {"ok": True, "db_path": db_path, "already_initialized": True}
+
     proj_dir = os.path.join(root, ".project")
     ensure_dir(proj_dir)
     db_path = os.path.join(proj_dir, "tasks.db")
@@ -78,6 +103,7 @@ def init(project_root: Optional[str] = None) -> dict:
     st = Storage(db_path=db_path)
     st.init_schema()
     _storage = st
+    _project_root = root
 
     return {"ok": True, "db_path": db_path}
 
@@ -91,6 +117,7 @@ def milestone_create(
     description: str = "",
     priority: int = 0,
     status: str = "planned",
+    rank: Optional[int] = None,
 ) -> dict:
     """
     Create a new milestone (milestone = sprint/release/goal container).
@@ -99,15 +126,16 @@ def milestone_create(
         title: Short title for milestone (required)
         description: Detailed description (optional, default: "")
         priority: Integer priority, higher = more important (default: 0)
+        rank: Order rank for sorting (default: equals priority)
         status: Initial status (default: "planned")
             Allowed: planned, active, done, archived
 
     Returns:
-        Created milestone dict with id, title, description, status, priority,
+        Created milestone dict with id, title, description, status, priority, rank,
         created_at, updated_at, version
 
     Example:
-        milestone_create(title="Q1 2025 Release", description="Ship new API", priority=10, status="planned")
+        milestone_create(title="Q1 2025 Release", description="Ship new API", priority=10, rank=1, status="planned")
     """
     st = require_storage()
     return st.milestone_create(
@@ -115,6 +143,7 @@ def milestone_create(
         description=description,
         status=status,
         priority=int(priority),
+        rank=int(rank) if rank is not None else None,
     )
 
 
@@ -176,6 +205,7 @@ def milestone_update(id: str, patch: dict) -> dict:
             - description: str
             - status: planned | active | done | archived
             - priority: int
+            - rank: int (order for sorting, defaults to priority)
 
     Returns:
         Updated milestone dict
@@ -185,7 +215,7 @@ def milestone_update(id: str, patch: dict) -> dict:
         ValueError: If unknown fields or invalid status
 
     Example:
-        milestone_update(id="ms-a1b2c3d4e5", patch={"status": "active", "priority": 5})
+        milestone_update(id="ms-a1b2c3d4e5", patch={"status": "active", "rank": 1})
     """
     st = require_storage()
     return st.milestone_update(id, patch)
@@ -329,6 +359,7 @@ def ticket_list(
             - mode: "inline" (default) or "file"
             - format: "json" or "md" (only for file mode)
             - path: file path (required for file mode)
+            - group_by_milestone: boolean (default: false) - group tickets by milestone in markdown
 
     Returns:
         List of ticket dicts, or meta dict if output to file.
@@ -336,7 +367,7 @@ def ticket_list(
     Example:
         ticket_list(milestone_id="ms-a1b2c3d4e5", status="todo", sort="priority")
         ticket_list(statuses=["todo", "in_progress", "blocked"])  # all open tickets
-        ticket_list(statuses=["todo", "in_progress"], output={"mode": "file", "format": "md", "path": "./open.md"})
+        ticket_list(statuses=["todo", "in_progress"], output={"mode": "file", "format": "md", "path": "./open.md", "group_by_milestone": true})
     """
     st = require_storage()
     if status and status not in ALLOWED_TICKET_STATUS:
@@ -620,7 +651,7 @@ def events_list(
 
 
 @mcp.tool()
-def ticket_next() -> Optional[dict]:
+def ticket_next(category: Optional[str] = None) -> Optional[dict]:
     """
     Get the next available ticket from the highest priority incomplete milestone.
 
@@ -630,11 +661,15 @@ def ticket_next() -> Optional[dict]:
     A ticket is "blocked" if any of its dependencies (depends_on) are not yet
     completed (status not in 'done' or 'canceled').
 
+    Args:
+        category: Optional category filter (backend, frontend, infra, docs, research, other)
+
     Returns:
         The next available ticket dict, or None if no tickets available.
 
     Example:
         ticket_next()  # Returns next unblocked high-priority ticket
+        ticket_next(category="backend")  # Only backend tasks
     """
     st = require_storage()
-    return st.ticket_next()
+    return st.ticket_next(category)
