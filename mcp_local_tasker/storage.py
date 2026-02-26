@@ -936,7 +936,14 @@ class Storage:
                 "SELECT COUNT(*) as c FROM tickets WHERE is_bug = 1 AND is_deleted = 0"
             ).fetchone()["c"]
             bugs_by_status = {}
-            for status in ("todo", "in_progress", "blocked", "done", "canceled"):
+            for status in (
+                "todo",
+                "in_progress",
+                "ready_for_review",
+                "blocked",
+                "done",
+                "canceled",
+            ):
                 c = conn.execute(
                     "SELECT COUNT(*) as c FROM tickets WHERE is_bug = 1 AND status = ? AND is_deleted = 0",
                     (status,),
@@ -1044,13 +1051,13 @@ class Storage:
             if not milestone_rows:
                 return None
 
-            open_statuses = ("todo", "in_progress", "blocked")
+            open_statuses = ("todo", "in_progress", "ready_for_review", "blocked")
 
             for m_row in milestone_rows:
                 milestone_id = m_row["id"]
 
                 params: list[Any] = [milestone_id, *open_statuses]
-                where = "milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?)"
+                where = "milestone_id = ? AND is_deleted = 0 AND status IN (?, ?, ?, ?)"
                 if category:
                     where += " AND category = ?"
                     params.append(category)
