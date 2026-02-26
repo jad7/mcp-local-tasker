@@ -1,6 +1,6 @@
 [project]
 name = "mcp-local-tasker"
-version = "0.3.2"
+version = "0.3.3"
 description = "MCP server for local milestone + ticket tracking"
 authors = [{name = "Developer"}]
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ mcp-local-tasker = "mcp_local_tasker:main"
 
 [tool.poetry]
 name = "mcp-local-tasker"
-version = "0.3.2"
+version = "0.3.3"
 description = "MCP server for local milestone + ticket tracking"
 authors = ["Developer"]
 readme = "README.md"

@@ -12,7 +12,14 @@ try:
 except Exception:
     __version__ = "0.0.0"
 
-ALLOWED_TICKET_STATUS = {"todo", "in_progress", "blocked", "done", "canceled"}
+ALLOWED_TICKET_STATUS = {
+    "todo",
+    "in_progress",
+    "ready_for_review",
+    "blocked",
+    "done",
+    "canceled",
+}
 ALLOWED_MILESTONE_STATUS = {"planned", "active", "done", "archived"}
 ALLOWED_CATEGORY = {"backend", "frontend", "infra", "docs", "research", "other"}
 
